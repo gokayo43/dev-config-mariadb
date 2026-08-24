@@ -34,19 +34,28 @@ should have this too" is an issue there, not a second implementation here.
   the wrapper and the README against the dev-config in `node_modules`, which is
   the commit the workflows call: every declared input reaches the call under its
   own name and is declared with dev-config's own type and default, nothing is
-  forwarded that dev-config does not declare, the Postgres job stays off and
-  cannot be turned on, what the README tables and what it says is refused cover
-  dev-config's input surface exactly, and the three carriers of the pin agree.
+  forwarded that dev-config does not declare, the call carries exactly one
+  literal and it is `database: false`, only one job calls that workflow at all,
+  what the README tables and what it says is refused cover dev-config's input
+  surface exactly, and the four carriers of the pin agree.
 
 ## Moving the dev-config pin
 
-Three files carry it — both workflows and `package.json`, with `bun.lock`
-following the manifest — and they move together, which the suite enforces: a
-repo gated by one dev-config, shipping another and grading its own wrapper
-against a third has no answer about any of them. Renovate raises the bump as a
-PR (`renovate.json` extends dev-config's preset, which keeps that pin off
-automerge); the tag in the trailing comment moves with the SHA, and
-`bun install` is part of adopting it.
+Four files carry it — both workflows, `package.json` and `bun.lock` — and the
+suite requires all four to name one commit: a repo gated by one dev-config,
+shipping another and grading its own wrapper against a third has no answer about
+any of them. Renovate raises the bump as a PR (`renovate.json` extends
+dev-config's preset, which keeps that pin off automerge); the tag in the trailing
+comment moves with the SHA, and `bun install` is part of adopting it.
+
+Renovate reaches the manifest through a different oracle than the workflows —
+digest against dev-config's default branch, tag for the two `uses:` — so a bump
+raised while dev-config's `main` sits ahead of its latest tag arrives with the
+carriers disagreeing, and the suite fails on that PR. Point all four at the
+tagged commit by hand when it happens.
+[#8](https://github.com/gokayo43/dev-config-mariadb/issues/8) is the decision
+about ending that, including why the obvious fix — a tag in the manifest — is
+refused by dev-config's own contract.
 
 Once a database job here ships a composite action, this repo takes on
 dev-config's release shape too: a commit cannot reference its own SHA, so the

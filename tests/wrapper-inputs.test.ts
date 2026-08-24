@@ -8,8 +8,13 @@ const FORWARD = /^\$\{\{\s*inputs(?:\.([\w-]+)|\[(['"])([^'"]+)\2\])\s*\}\}$/;
 /** The spec that installs dev-config, which has to name the commit the workflows call. */
 const INSTALLS = /"@gokayo43\/dev-config": "github:gokayo43\/dev-config#([0-9a-f]{40})"/;
 
+/** What bun.lock records that spec as having resolved to — an abbreviated commit. */
+const LOCKED = /"@gokayo43\/dev-config@github:gokayo43\/dev-config#([0-9a-f]+)"/;
+
 /** The sentence README.md's list of refused inputs opens with, which is what makes that list checkable. */
 const REFUSED = "refused here rather than forwarded";
+
+const INSTALLED = "node_modules/@gokayo43/dev-config/.github/workflows/check.yml";
 
 /** What a caller may write beside a called workflow's input name. */
 type Argument = string | boolean;
@@ -34,10 +39,39 @@ interface Workflow {
 
 const root = `${import.meta.dir}/..`;
 
-async function workflow(path: string): Promise<Workflow> {
-  const text = await Bun.file(`${root}/${path}`).text();
+function parse(text: string): Workflow {
   // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- the interface above is this suite's schema for the three workflows it reads; what the assertion claims is what every test below asserts
   return Bun.YAML.parse(text) as Workflow;
+}
+
+async function workflow(path: string): Promise<Workflow> {
+  return parse(await Bun.file(`${root}/${path}`).text());
+}
+
+/**
+ * dev-config's `check.yml` as this repo has it installed, which is that pin's
+ * own copy of the input surface every test below grades the wrapper against.
+ *
+ * It is on disk because a `github:` dependency installs a checkout of the whole
+ * repository — `.github/` is outside dev-config's `files` allowlist, so a packed
+ * install would not carry it. That is the invariant the diagnostic states: if it
+ * fires, dev-config is being installed packed and this suite needs another way
+ * to read what it declares.
+ */
+async function installed(): Promise<Workflow> {
+  const file = Bun.file(`${root}/${INSTALLED}`);
+  if (!(await file.exists())) {
+    throw new Error(
+      `${INSTALLED} is not there — this suite reads dev-config's input surface out of the install, which carries its workflows only because a github: dependency is a full checkout rather than a packed tarball. Run bun install; if the file is still missing, dev-config is packed now and this suite has to read that surface from somewhere else.`,
+    );
+  }
+  return parse(await file.text());
+}
+
+/** A group the pattern that matched has to have captured, since every branch of it captures one. */
+function captured(value: string | undefined, what: string): string {
+  if (value === undefined) throw new Error(`${what} matched and captured nothing`);
+  return value;
 }
 
 function inputsOf(
@@ -46,37 +80,45 @@ function inputsOf(
   return read.on?.workflow_call?.inputs ?? {};
 }
 
-/** The job that calls dev-config's gate, which every question here is about. */
+/**
+ * The job that calls dev-config's gate. Exactly one, and the count is the check
+ * rather than a detail of finding it: a second job calling the same workflow is
+ * how the Postgres database job gets turned on beside a wrapper that reads as
+ * leaving it off, and reading only the first is how nobody would notice.
+ */
 function call(
   read: Workflow,
   path: string,
-): {
-  readonly uses: string;
-  readonly with: Readonly<Record<string, Argument>>;
-} {
-  const job = Object.values(read.jobs ?? {}).find(
+): { readonly uses: string; readonly with: Readonly<Record<string, Argument>> } {
+  const jobs = Object.values(read.jobs ?? {}).filter(
     ({ uses }) => uses !== undefined && CHECK_CALL.test(uses),
   );
-  if (job?.uses === undefined) {
-    throw new Error(`${path} has no job calling dev-config's check.yml at a pinned commit`);
+  const [job] = jobs;
+  if (jobs.length !== 1 || job?.uses === undefined) {
+    throw new Error(
+      `${path} must have exactly one job calling dev-config's check.yml at a pinned commit, and has ${jobs.length}`,
+    );
   }
   return { uses: job.uses, with: job.with ?? {} };
+}
+
+/** Whether the value written beside an input name hands a caller's input on rather than deciding it here. */
+function forwards(value: Argument): value is string {
+  return typeof value === "string" && FORWARD.test(value);
 }
 
 const alphabetically = (a: string, b: string): number => a.localeCompare(b);
 
 const wrapper = await workflow(".github/workflows/check.yml");
 const ci = await workflow(".github/workflows/ci.yml");
-// The dev-config this repo installs is the dev-config its workflows pin — the
-// last test here is what holds those two together — so its own check.yml is the
-// input surface the wrapper is graded against, at the commit consumers get.
-const upstream = await workflow("node_modules/@gokayo43/dev-config/.github/workflows/check.yml");
+const upstream = await installed();
 
 test("every input the wrapper declares reaches dev-config's check.yml under its own name", () => {
   const passes = Object.entries(call(wrapper, "check.yml").with);
   const passed = passes.flatMap(([key, value]) => {
-    const forward = typeof value === "string" ? FORWARD.exec(value) : null;
-    return forward === null ? [] : [[key, forward[1] ?? forward[3] ?? ""] as const];
+    if (!forwards(value)) return [];
+    const forward = FORWARD.exec(value);
+    return [[key, captured(forward?.[1] ?? forward?.[3], "FORWARD")] as const];
   });
   // Three failures, and a run shows none of them: an input declared and never
   // handed on is a setting a consumer wrote that nothing reads, one handed on
@@ -107,7 +149,8 @@ test("README.md's account of the input surface is dev-config's, minus the databa
   const byName = (a: readonly [string, string], b: readonly [string, string]): number =>
     alphabetically(a[0], b[0]);
   const tabled = [...readme.matchAll(/^\| `([\w-]+)` +\| `(\w+)` +\|$/gm)].map(
-    ([, name, type]) => [name ?? "", type ?? ""] as const,
+    ([, name, type]) =>
+      [captured(name, "the input table"), captured(type, "the input table")] as const,
   );
   expect(tabled.toSorted(byName)).toEqual(
     Object.entries(inputsOf(wrapper))
@@ -121,7 +164,12 @@ test("README.md's account of the input surface is dev-config's, minus the databa
     .split("\n\n")
     .map((block) => block.replaceAll("\n", " "))
     .find((block) => block.includes(REFUSED));
-  const refused = [...(paragraph ?? "").matchAll(/`([\w-]+)`/g)].map(([, name]) => name ?? "");
+  if (paragraph === undefined) {
+    throw new Error(`README.md has no paragraph saying what is "${REFUSED}"`);
+  }
+  const refused = [...paragraph.matchAll(/`([\w-]+)`/g)].map(([, name]) =>
+    captured(name, "the refused list"),
+  );
   // Both halves are prose about a file in another repo, which is the statement
   // here most able to go quietly out of date: an input dev-config adds and this
   // page names in neither place is one nobody decided about.
@@ -133,16 +181,24 @@ test("README.md's account of the input surface is dev-config's, minus the databa
 });
 
 test("the wrapper leaves dev-config's database job off and offers no way to turn it on", () => {
-  expect(call(wrapper, "check.yml").with["database"]).toBe(false);
+  // Everything else in the call is a caller's input handed on; a second literal
+  // would be this workflow answering for a consumer in a value nothing here
+  // declares, and dev-config cannot tell that from the consumer's own answer.
+  expect(
+    Object.entries(call(wrapper, "check.yml").with).filter(([, value]) => !forwards(value)),
+  ).toEqual([["database", false]]);
   expect(Object.keys(inputsOf(wrapper))).not.toContain("database");
 });
 
 test("this repo is gated by, and installs, the dev-config it hands its consumers", async () => {
-  const pinned = CHECK_CALL.exec(call(wrapper, "check.yml").uses)?.[1];
-  expect(pinned).toMatch(/^[0-9a-f]{40}$/);
-  expect(CHECK_CALL.exec(call(ci, "ci.yml").uses)?.[1]).toBe(pinned);
-  // The third carrier of the same commit: the install is what the lanes above
-  // read dev-config's input surface out of, and a manifest left behind grades
-  // this wrapper against a version no consumer is being handed.
+  const pinned = captured(CHECK_CALL.exec(call(wrapper, "check.yml").uses)?.[1], "CHECK_CALL");
+  expect(captured(CHECK_CALL.exec(call(ci, "ci.yml").uses)?.[1], "CHECK_CALL")).toBe(pinned);
+  // The other two carriers of the same commit: the manifest decides which
+  // dev-config the lanes above read, and the lockfile is what `bun install
+  // --frozen-lockfile` actually resolves — a manifest and a lock that disagree
+  // put a third version on disk with nothing saying so.
   expect(INSTALLS.exec(await Bun.file(`${root}/package.json`).text())?.[1]).toBe(pinned);
+  expect(pinned).toStartWith(
+    captured(LOCKED.exec(await Bun.file(`${root}/bun.lock`).text())?.[1], "LOCKED"),
+  );
 });

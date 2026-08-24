@@ -7,6 +7,8 @@ saveExact = true
 
 [test]
 # A floor, not a target, applied by the `--coverage` CI passes and by nothing
-# local — dev-config's docs/gates/test-suite.md.
+# local — dev-config's docs/gates/test-suite.md. It grades nothing yet: the only
+# file this repo's suite loads is the suite, and the line below skips those. The
+# first MariaDB gate module is what it starts holding.
 coverageThreshold = { lines = 0.75, functions = 0.75 }
 coverageSkipTestFiles = true
