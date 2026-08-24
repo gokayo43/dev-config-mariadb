@@ -22,11 +22,11 @@ second implementation here.
 **The one carve-out: the gate library.** A composite action runs from a checkout
 of its own repo with no `node_modules` above it, and `.github/` is outside
 dev-config's `files` allowlist — so nothing under `.github/actions/` here can
-import from the dev-config this repo installs, by any route. Two files are
-therefore checked-in copies of theirs at the pinned SHA, and each says so in its
-own header with its deltas named: `_lib/annotations.ts` (their `_lib/gate.ts`)
-and the three functions `db-replay/database.ts` names (`databaseIn`, `migrate`,
-`rowsIn`). [dev-config#69](https://github.com/gokayo43/dev-config/issues/69) is
+import from the dev-config this repo installs, by any route. Three files
+therefore carry checked-in copies of theirs at the pinned SHA, and each says so
+in its own header with its deltas named: `_lib/annotations.ts` (the writing half
+of their `_lib/gate.ts`), `_lib/foreign.ts` (its narrowing half), and the three
+functions `db-replay/database.ts` names (`databaseIn`, `migrate`, `rowsIn`). [dev-config#69](https://github.com/gokayo43/dev-config/issues/69) is
 where ending that is argued.
 
 The carve-out is for what the runtime makes unreachable, and nothing else. It is

@@ -10,6 +10,25 @@
  * So the shape is refused at the read instead, and every gate goes through
  * these five rather than restating the narrowing. The alias below is the one
  * escape hatch in the tree, in the one module whose job is to hold it.
+ *
+ * **This is a checked-in copy of the narrowing half of dev-config's
+ * `.github/actions/_lib/gate.ts` at the pinned SHA**, for the reason
+ * `annotations.ts` gives at length and CLAUDE.md carries as a carve-out: an
+ * action runs from a checkout with no node_modules above it, so there is no
+ * import that reaches the original. dev-config#69 is where ending that is
+ * argued.
+ *
+ * Deltas from upstream, all cosmetic — nothing here behaves differently:
+ *   * `Foreign` is their `ConfigObject`, under a name that says whose document
+ *     it is rather than what kind of file it came from, since this repo reads
+ *     database rows through it as well as configs.
+ *   * `isForeign` is their `isObject`, renamed to match.
+ *   * `kindOf` says "a list" where theirs says "an array", because every
+ *     diagnostic here that uses it is about a query answer or a YAML node.
+ *   * `mapAt` and `textAt` are this repo's own: upstream reads fields through
+ *     `record()` at each call site, and two readers here descend several levels
+ *     of a document at a time.
+ *   * `isList` is theirs verbatim, docblock included.
  */
 
 // oxlint-disable-next-line typescript/no-restricted-types, anti-slop/no-unsafe-dictionary-type -- the boundary this module exists to be: a mapping whose keys are another author's, read through the functions below and never indexed raw

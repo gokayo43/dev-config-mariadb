@@ -1,7 +1,7 @@
 import type { Verdict } from "../_lib/annotations.ts";
 import { mapAt, textAt } from "../_lib/foreign.ts";
-import { databaseIn, dumpOf, JOURNAL, migrate, objectsIn } from "./database.ts";
-import { compare, type Dump } from "./schema.ts";
+import { databaseIn, dumpOf, JOURNAL, migrate, objectsIn, SCRIPT } from "./database.ts";
+import { compare, type Dump, DUMP, schemaFrom } from "./schema.ts";
 
 /**
  * What a repo's migration history is asked to prove here, and it is one
@@ -23,52 +23,14 @@ import { compare, type Dump } from "./schema.ts";
  * journalled migrator that proves the journal is honest, and with anything that
  * re-executes SQL it proves the SQL is re-runnable.
  *
- * Both are decided by `compare` in database.ts, over the same normalised dump.
+ * Both are decided by `compare` in schema.ts, over the same normalised dump —
+ * which is also where the lines a dump carries that are not schema are named
+ * and taken out.
  */
 
-/** What a repo declares its migrator as, and the only command this gate runs. */
-const SCRIPT = "db:migrate";
-
-/**
- * `AUTO_INCREMENT=<n>` in a table's option list: the value the counter would
- * hand out next.
- *
- * The one thing a MariaDB schema dump carries that moves without the schema
- * moving. It is a fact about how many rows have been inserted — a migration
- * that seeds a row, a migrator that writes its own journal — so a database
- * whose schema is untouched still renders differently once anything has
- * written to it, and comparing dumps without taking it out would refuse a repo
- * that is fine.
- *
- * Anchored to the option list, which is the line that closes the `CREATE
- * TABLE`. A column's own `AUTO_INCREMENT` carries no `=`, and a default value
- * that happened to spell one is inside a `CREATE` rather than after its
- * closing paren.
- *
- * It is the only exclusion. Two dumps of one database taken a second apart are
- * otherwise byte-identical once `--skip-dump-date` has taken the timestamp out
- * — the header, the compatibility `SET`s, the `DEFINER` on every view and
- * trigger and the `STARTS` clause on an event are all stable — so nothing else
- * here is filtered, and a line that moves is a line worth failing over.
- */
-const COUNTER = /^(\).*?) AUTO_INCREMENT=\d+/u;
-
-/**
- * What the dump is asked for: no rows, and everything the catalogue holds that
- * a migration can build. Routines and events are not in `mariadb-dump`'s
- * defaults, and a schema that left them out would call a repo's stored
- * procedures unchanged whatever had happened to them.
- *
- * `--skip-dump-date` rather than a filter over the output: the timestamp is the
- * only thing the tool writes that differs per invocation, and refusing to
- * generate it is one fewer rule about what the text may say.
- */
-const DUMP = ["--no-data", "--skip-dump-date", "--routines", "--events", "--triggers"];
-
-/** The schema as the server's client renders it, minus the one thing that moves without it. */
+/** The schema as the server's own client renders it, with what is not schema taken out. */
 async function schemaOf(url: string, image: string, of: string): Promise<Dump> {
-  const dumped = await dumpOf(url, image, DUMP);
-  return { of, units: dumped.split("\n").map((line) => line.replace(COUNTER, "$1")) };
+  return schemaFrom(of, await dumpOf(url, image, DUMP));
 }
 
 /** Where the gate replays, what it replays with, and where the evidence goes. */
@@ -109,6 +71,20 @@ export async function replayGate({
   replayed,
 }: Replay): Promise<Verdict> {
   const database = databaseIn(url);
+
+  // A composite action maps a missing input to the empty string, so `required:
+  // true` in action.yml is a promise nothing enforces at runtime. Without this
+  // the gate replays the history twice and then dies on `docker run ""
+  // mariadb-dump`, having spent the job's budget to report a wiring fault the
+  // first line could have named. check.yml always passes it; a caller running
+  // the action directly is who this is for.
+  if (image.trim() === "") {
+    return {
+      problems: [
+        "the db-image input is empty, and it names the image this gate takes its dump client from — the calling job has to pass the same image it runs the MariaDB service from, pinned by digest.",
+      ],
+    };
+  }
 
   // Answerable from the filesystem alone, and ahead of everything below because
   // everything below costs a migrator run against a real server. A repo with no

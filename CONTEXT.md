@@ -33,8 +33,11 @@ that the schema either side is the same.
 
 **The schema** — what `mariadb-dump` renders of a database's catalogue with no
 rows in it: tables, views and sequences, routines, events and triggers. Not the
-rows, and not the `AUTO_INCREMENT` counters, which say how many rows have been
-written rather than what may be written.
+rows, and not the three lines that record how many values an object has handed
+out or when it was last created — a table's `AUTO_INCREMENT` counter, a
+sequence's `SETVAL` position, an event's `STARTS` stamp. Those say what has
+happened to a database, not what it can hold; `docs/gates/db-replay.md` names
+each one and what it costs to drop it.
 
 **The journal** — the table a journalled migrator keeps its own record in. For
 drizzle's MySQL migrator it is `__drizzle_migrations`, in the database being

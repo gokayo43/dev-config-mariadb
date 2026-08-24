@@ -1,4 +1,4 @@
-import { afterAll, afterEach } from "bun:test";
+import { afterEach } from "bun:test";
 
 import { SQL } from "bun";
 
@@ -91,6 +91,19 @@ async function started(): Promise<string> {
       await db.close();
       return url;
     } catch (refused) {
+      // Polled against the container as well as against the query. The name is
+      // derived from the checkout, so a SECOND run of this suite in the SAME
+      // checkout reclaims this container out from under the first — and without
+      // this check the first spends the whole deadline failing to connect to a
+      // server that no longer exists, which reads as a hang rather than as the
+      // collision it is. (Two checkouts are genuinely independent; that is what
+      // the name is derived from the worktree for.)
+      if (!(await running())) {
+        throw new Error(
+          `${CONTAINER} is gone while this run was still waiting for it — another run of this suite in this same checkout reclaimed the name, or the server died on boot. Run the suite once per checkout at a time, or use a second worktree.`,
+          { cause: refused },
+        );
+      }
       if (Date.now() > deadline) {
         throw new Error(`${CONTAINER} never answered a query`, { cause: refused });
       }
@@ -99,16 +112,59 @@ async function started(): Promise<string> {
   }
 }
 
-export const SERVER = await started();
+/** Whether the container this run started is still there to be waited for. */
+async function running(): Promise<boolean> {
+  const proc = Bun.spawn(["docker", "inspect", "--format", "{{.State.Running}}", CONTAINER], {
+    stdout: "pipe",
+    stderr: "ignore",
+  });
+  const [stdout, status] = await Promise.all([new Response(proc.stdout).text(), proc.exited]);
+  return status === 0 && stdout.trim() === "true";
+}
 
-afterAll(async () => {
+/**
+ * The server, started once per run and shared by every file that asks for one.
+ *
+ * Lazy, and that is the whole of why it is a function rather than a
+ * top-level `await` on a `const`. Two things depend on it:
+ *
+ * **The teardown has to be registered outside any file.** `bun test` runs every
+ * file in one process, and a hook registered at the top level of an imported
+ * module attaches to whichever file imported it FIRST — so an `afterAll` here
+ * would tear the server down after that file's cases and leave every later file
+ * connecting to nothing, under a `Connection closed` naming neither this module
+ * nor the cause. `tests/preload.ts` registers it at the root scope instead,
+ * where it runs after all of them; for that, importing this module must not
+ * start anything.
+ *
+ * **A run that needs no database should start none.** `bun test
+ * tests/annotations.test.ts` touches no server, and under a top-level start it
+ * paid for one anyway.
+ */
+export async function server(): Promise<string> {
+  up ??= started();
+  return await up;
+}
+
+let up: Promise<string> | undefined;
+
+/**
+ * The end of the run, called from the root scope. Nothing to do if no case ever
+ * asked for a server — and `started()` reclaims the name before it creates,
+ * so a run killed hard enough to skip this leaves nothing the next one trips
+ * on.
+ */
+export async function stop(): Promise<void> {
+  if (up === undefined) return;
+  up = undefined;
   await docker("rm", "--force", CONTAINER);
-});
+}
 
 const made: string[] = [];
 
 afterEach(async () => {
-  const db = new SQL(SERVER);
+  if (made.length === 0) return;
+  const db = new SQL(await server());
   for (const name of made.splice(0)) await db.unsafe(`drop database if exists \`${name}\``);
   await db.close();
 });
@@ -124,12 +180,13 @@ let asked = 0;
 /** An empty database of this case's own, and its URL. */
 export async function emptyDatabase(): Promise<string> {
   const name = `replay_${process.pid}_${asked++}`;
-  const db = new SQL(SERVER);
+  const url = await server();
+  const db = new SQL(url);
   await db.unsafe(`drop database if exists \`${name}\``);
   await db.unsafe(`create database \`${name}\``);
   await db.close();
   made.push(name);
-  return beside(SERVER, name);
+  return beside(url, name);
 }
 
 /** What a case has to be able to ask the server directly, where the gate's own answer is what is under test. */

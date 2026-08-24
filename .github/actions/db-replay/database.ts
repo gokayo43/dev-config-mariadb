@@ -1,5 +1,6 @@
 import { SQL } from "bun";
 
+import { relay } from "../_lib/annotations.ts";
 import { type Foreign, isForeign, isList, kindOf, textAt } from "../_lib/foreign.ts";
 
 /**
@@ -27,6 +28,15 @@ import { type Foreign, isForeign, isList, kindOf, textAt } from "../_lib/foreign
  * characters a URL has to percent-encode, and `mariadb-dump` is handed this as
  * an argument rather than as part of a URL. Postgres names reach their tool
  * inside the URL, so upstream never has to undo the encoding.
+ *
+ * The decode is load-bearing and it is also the sharp edge: whatever it returns
+ * becomes an argv entry, and `mariadb-dump` reads options after positionals —
+ * so a URL whose path spelled `%2D%2Dtab%3D/tmp/x` would arrive as `--tab=…`
+ * and write files. Nothing crosses a boundary as shipped, because DATABASE_URL
+ * is a literal in check.yml and a caller who can set it is already running
+ * their own code in that job. It is written down because the next reader's
+ * instinct will be to widen where the URL comes from, and that is the change
+ * that would make this reachable.
  */
 export function databaseIn(url: string): string {
   return decodeURIComponent(new URL(url).pathname.replace(/^\//u, ""));
@@ -80,8 +90,10 @@ export const JOURNAL = "__drizzle_migrations";
  *
  * Routines and events are in the answer for one reason: without them a
  * migration set that builds only a stored procedure reads as one that built
- * nothing, and the gate refuses a repo that is fine. The dump asks for the same
- * five, so the two agree about what a schema is.
+ * nothing, and the gate refuses a repo that is fine. The dump asks for these
+ * and for triggers as well, which are not counted here and need not be: a
+ * trigger cannot exist without the table it is on, so a database holding one
+ * has already been counted.
  */
 export async function objectsIn(url: string): Promise<string[]> {
   const database = databaseIn(url);
@@ -107,6 +119,13 @@ export async function objectsIn(url: string): Promise<string[]> {
 }
 
 /**
+ * The script a repo declares its migrator as, named once: the pre-flight check
+ * that a repo HAS one and the command that runs it are one name, and two
+ * spellings of it would let a gate refuse a repo over a script it never ran.
+ */
+export const SCRIPT = "db:migrate";
+
+/**
  * The repo's own migrator, which is the only one there is: nothing here writes
  * SQL. Its output is the developer's — the statement that would not apply, and
  * the line it was on — so it goes to the log rather than into a diagnostic that
@@ -116,18 +135,33 @@ export async function objectsIn(url: string): Promise<string[]> {
  * runs more than once per gate and "the second one failed" names something the
  * author has never heard of.
  *
- * dev-config's, with their `against` folded in: they route two commands through
- * it — the migrator and a repo's own shell — and this gate runs only the first,
- * so the indirection had one caller and no second one to justify it.
+ * dev-config's, with two deltas. Their `against` is folded in: they route two
+ * commands through it — the migrator and a repo's own shell — and this gate
+ * runs only the first, so the indirection had one caller.
+ *
+ * And the output is **relayed rather than inherited**, which is the important
+ * one. Inherited, a consuming repo's migrator writes straight onto the stdout
+ * the runner reads its own commands off, so `echo '::stop-commands::x'` in a
+ * `db:migrate` script silences every annotation the gate is about to make —
+ * with no gate code in between to prevent it. Captured and relayed, the same
+ * line arrives as text. The cost is that the output lands when the migrator
+ * ends rather than streaming, which for a migration is no cost at all.
+ * dev-config#71 is the same shape upstream.
  */
 export async function migrate(root: string, url: string, failed: string): Promise<void> {
-  const proc = Bun.spawn(["bun", "run", "db:migrate"], {
+  const proc = Bun.spawn(["bun", "run", SCRIPT], {
     cwd: root,
     env: { ...process.env, DATABASE_URL: url },
-    stdout: "inherit",
-    stderr: "inherit",
+    stdout: "pipe",
+    stderr: "pipe",
   });
-  if ((await proc.exited) !== 0) throw new Error(failed);
+  const [out, err, status] = await Promise.all([
+    new Response(proc.stdout).text(),
+    new Response(proc.stderr).text(),
+    proc.exited,
+  ]);
+  relay(out + err);
+  if (status !== 0) throw new Error(failed);
 }
 
 /**

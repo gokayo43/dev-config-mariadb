@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 
-import { compare, type Dump } from "../.github/actions/db-replay/schema.ts";
+import { compare, type Dump, EXCLUSIONS, schemaFrom } from "../.github/actions/db-replay/schema.ts";
 
 /**
  * The one derivation of "these two came out the same", graded without a
@@ -155,4 +155,83 @@ test("no difference is ever empty", () => {
     expect(difference?.lines.length ?? 0).toBeGreaterThan(0);
     expect(difference?.headline ?? "").not.toBe("");
   }
+});
+
+/**
+ * The other half of this module: what a dump line means before two of them are
+ * compared. Each case is one member of the class — a number recording how many
+ * values an object has handed out, or a stamp recording when one was created —
+ * and each is a line the shipped gate has been driven to a red verdict on
+ * before the rule for it existed.
+ */
+
+test("a table's AUTO_INCREMENT counter is not part of its schema", () => {
+  const before = schemaFrom("before", ") ENGINE=InnoDB AUTO_INCREMENT=2 DEFAULT CHARSET=utf8mb4;");
+  const after = schemaFrom("after", ") ENGINE=InnoDB AUTO_INCREMENT=91 DEFAULT CHARSET=utf8mb4;");
+
+  expect(compare(before, after)).toBeUndefined();
+  expect(before.units).toEqual([") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;"]);
+});
+
+test("a column's own AUTO_INCREMENT keyword survives, since it carries no counter", () => {
+  const kept = "  `id` int(11) NOT NULL AUTO_INCREMENT,";
+  expect(schemaFrom("a", kept).units).toEqual([kept]);
+});
+
+test("a sequence's position is not part of its schema", () => {
+  const before = schemaFrom("before", "DO SETVAL(`counter`, 2, 0);");
+  const after = schemaFrom("after", "DO SETVAL(`counter`, 1001, 0);");
+
+  expect(compare(before, after)).toBeUndefined();
+  expect(before.units).toEqual(["DO SETVAL(`counter`, <next>, <cycles>);"]);
+});
+
+test("a sequence's own shape is still compared", () => {
+  const before = schemaFrom(
+    "before",
+    "CREATE SEQUENCE `s` start with 1 increment by 1 cache 1000;",
+  );
+  const after = schemaFrom("after", "CREATE SEQUENCE `s` start with 1 increment by 2 cache 1000;");
+
+  expect(compare(before, after)?.headline).toContain("first differ at line 1");
+});
+
+test("an event's start stamp is not part of its schema", () => {
+  const event = (at: string): string =>
+    `/*!50106 CREATE*/ /*!50117 DEFINER=\`root\`@\`%\`*/ /*!50106 EVENT \`sweep\` ON SCHEDULE EVERY 1 DAY STARTS '${at}' ON COMPLETION NOT PRESERVE ENABLE DO SELECT 1 `;
+
+  expect(
+    compare(
+      schemaFrom("before", event("2026-08-24 15:40:48")),
+      schemaFrom("after", event("2026-08-24 15:40:50")),
+    ),
+  ).toBeUndefined();
+});
+
+test("what an event actually does is still compared", () => {
+  const body = (does: string): string =>
+    `/*!50106 CREATE*/ /*!50106 EVENT \`sweep\` ON SCHEDULE EVERY 1 DAY STARTS '2026-08-24 15:40:48' ENABLE DO ${does} `;
+
+  expect(
+    compare(schemaFrom("before", body("SELECT 1")), schemaFrom("after", body("DELETE FROM t"))),
+  ).not.toBeUndefined();
+});
+
+// Every rule the module carries has to be justifiable on the page that lists
+// them, so the list is what the page is written from rather than a second copy
+// of it.
+test("every exclusion says what it records instead of schema", () => {
+  expect(EXCLUSIONS).toHaveLength(3);
+  for (const records of EXCLUSIONS) expect(records).not.toBe("");
+});
+
+test("an ordinary schema line is left exactly as the dump wrote it", () => {
+  const lines = [
+    "CREATE TABLE `thing` (",
+    "  `id` int(11) NOT NULL,",
+    "  PRIMARY KEY (`id`)",
+    "/*!40101 SET character_set_client = @saved_cs_client */;",
+    "",
+  ];
+  expect(schemaFrom("a", lines.join("\n")).units).toEqual(lines);
 });

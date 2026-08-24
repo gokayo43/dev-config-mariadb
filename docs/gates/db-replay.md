@@ -35,19 +35,34 @@ schema that left them out would call a repo's stored procedures unchanged
 whatever had happened to them, and — the sharper half — would call a migration
 set that builds only a routine a migration set that built nothing.
 
-**One exclusion, and it is `AUTO_INCREMENT=<n>` in a table's option list.** That
-number is the value the counter would hand out next, which is a fact about how
-many rows have been written rather than about the schema: a migration that seeds
-a row moves it, and so does a migrator writing its own journal. It is taken out
-on the line that closes the `CREATE TABLE` — a column's own `AUTO_INCREMENT`
-carries no `=`, so nothing inside a table definition is touched.
+### What is taken out, and why it is one class
 
-Nothing else is filtered, and that is a measurement rather than a hope: two
-dumps of one database taken a second apart are byte-identical once
-`--skip-dump-date` has stopped the tool writing a timestamp. The header, the
-compatibility `SET`s, the `DEFINER` on every view and trigger, the `STARTS`
-clause on an event — all stable. So a line that moves is a line worth failing
-over.
+A dump carries three lines that are not schema. They are one kind of fact —
+**how many values an object has handed out, and when an object was last
+created** — and each is rewritten by an ordinary migration doing an ordinary
+thing, so a comparison that kept them refuses a repo that is fine.
+
+| Line                                 | What it records                                                                                                                                                                                                                                                                      |
+| ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `) ENGINE=… AUTO_INCREMENT=<n> …`    | the id the table would hand out next. A migration that seeds a row moves it, and so does a migrator writing its own journal. Taken out on the line that closes the `CREATE TABLE` — a column's own `AUTO_INCREMENT` carries no `=`, so nothing inside a table definition is touched. |
+| `DO SETVAL(<seq>, <next>, <cycles>)` | the value a sequence would hand out next. One `NEXTVAL` moves it, by a thousand at the default cache of 1000. The sequence's own shape — start, min, max, increment, cache, cycle — is on the `CREATE SEQUENCE` line above and is compared in full.                                  |
+| `EVENT … STARTS '<stamp>'`           | when the event was created. An event with no explicit `STARTS` is stamped with its creation time, and the idiomatic re-runnable migration for one is `DROP EVENT IF EXISTS` followed by `CREATE EVENT` — which re-creates it, and re-stamps it, on every replay.                     |
+
+The membership was swept rather than guessed. A database carrying a table, a
+sequence, a view, a procedure, a function, a trigger and an event, put twice
+through the re-runnable idioms a migration is written in — `CREATE TABLE IF NOT
+EXISTS` with an insert, `CREATE OR REPLACE VIEW`, `DROP … IF EXISTS` before each
+`CREATE` — moved exactly those three lines and no others. Every `DEFINER`, every
+`sql_mode` block, the sequence's own definition and the whole compatibility
+preamble came out byte-identical.
+
+That is the measurement, and it is a measurement of **the comparison this gate
+actually makes**: two dumps with a migrator run between them, not two dumps of
+an untouched database a second apart. The second is a much weaker claim and it
+is the one that hid two of the three lines above.
+
+So a line that moves and is not on that table is a line worth failing over. What
+the exclusions cost is named under "What this cannot catch".
 
 A red run names **where** the two part. Both dumps come from one tool through
 one split, so index `n` is line `n + 1` of both files: the gate walks them in
@@ -58,13 +73,25 @@ an unbounded one would print most of the schema on the commonest failure there
 is — and what is cut is counted rather than dropped. Both dumps leave the run
 whole in the artifact, so the log's job is to point rather than to reproduce.
 
-There is no such thing as a refusal with nothing under it, and that is
-structural rather than careful: each side always contributes at least the
-sentence saying where it parted, so a difference with an empty log cannot be
-built. A red step with an empty explanation is the one thing no gate here may
-produce, and the way to fail that is a comparison that subtracts two sets and
-finds nothing left to say — which is exactly what
-[dev-config#70](https://github.com/gokayo43/dev-config/issues/70) is.
+There is no such thing as a refusal with nothing under it, and it takes two
+things to keep that true.
+
+The comparison always has something to say: each side contributes at least the
+sentence naming where it parted, so a difference with an empty log cannot be
+built. The way to fail _that_ is a comparison that subtracts two sets and finds
+nothing left over, which is exactly
+[dev-config#70](https://github.com/gokayo43/dev-config/issues/70).
+
+And what it has to say has to survive the trip to the log. The runner reads its
+own commands off the same stdout, matching `::` once a line's leading whitespace
+is trimmed — so a dump line that trims to `::stop-commands::` would silence every
+annotation the gate is about to make, and a step that failed would go red with
+nothing rendered. A schema dump is text the graded repo wrote (a routine body
+holds whatever its author typed), so it is relayed behind a `| ` margin that
+cannot be trimmed away rather than printed. The consuming repo's own migrator
+output goes the same way, for the same reason and by an easier route.
+[dev-config#71](https://github.com/gokayo43/dev-config/issues/71) is both holes
+upstream.
 
 ## Where the client comes from
 
@@ -126,6 +153,12 @@ gets trusted for things it never checked.
 
 - **Whether the schema is right.** That a history rebuilds says nothing about
   whether what it builds is what the app needs.
+- **A change to one of the three excluded lines.** A migration that deliberately
+  set a sequence's position, or wrote an absolute `STARTS` and then changed it,
+  is invisible here. Both replays run one lineage, so neither can differ between
+  them for a reason the author chose — but a gate comparing two _different_
+  lineages, which the upgrade path will, has to decide this again rather than
+  inherit it.
 - **Anything about a deployed database.** Both replays here start from empty. A
   migration that has already been applied somewhere is never re-read by a
   journalled migrator, so a rewritten one changes what a fresh database gets and

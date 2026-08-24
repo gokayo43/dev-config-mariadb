@@ -24,6 +24,8 @@
 //   * `publish` is synchronous and writes no run summary: no gate here
 //     publishes a table yet.
 //   * `entry` escapes the caught error — see there.
+//   * `publish` relays the log through `relay` rather than printing it — see
+//     there. Upstream prints it raw, which is dev-config#71's second half.
 
 /**
  * What a gate answers with. `problems` is what fails the step, `log` is the
@@ -59,6 +61,41 @@ function commanded(message: string): string {
 }
 
 /**
+ * The margin every relayed line carries.
+ *
+ * Not decoration. The runner reads its own commands off this stdout, matching
+ * `::` after trimming the line's leading whitespace — so any line whose first
+ * non-blank characters are `::` is a command it obeys, whoever wrote it. What
+ * this repo relays is a schema dump and a consuming repo's migrator output,
+ * both of which carry text the graded repo chose: a routine body holding a
+ * newline and `::stop-commands::` reaches the log as a line of its own, and
+ * from there the gate's own annotations stop rendering. The step still fails,
+ * so no verdict is flipped — it goes red with nothing shown, which is the one
+ * outcome no gate here may produce.
+ *
+ * A leading `| ` cannot be trimmed away and is not `::`, so the class is dead
+ * at this one choke point rather than at each caller. Indenting was not enough
+ * and never could be: whitespace is exactly what the runner removes first.
+ */
+const MARGIN = "| ";
+
+/**
+ * Output this repo did not write, put on the log without letting it speak to
+ * the runner. Line by line, because the evidence is multi-line and its shape is
+ * the point — a single escaped blob would arrive as one unreadable line.
+ *
+ * `commanded` is deliberately NOT applied: these lines are plain stdout rather
+ * than the body of a workflow command, so GitHub decodes no escapes in them and
+ * a `%` run through it would render as `%25`.
+ */
+export function relay(output: string): void {
+  const lines = output.split("\n");
+  // A trailing newline is a line ending, not an empty last line to print.
+  if (lines.at(-1) === "") lines.pop();
+  for (const line of lines) console.log(`${MARGIN}${line}`);
+}
+
+/**
  * The whole of what a `*.main.ts` does with a verdict, here rather than in each
  * entry point because the order of the writes is load-bearing: what the run
  * wrote goes out first, then the annotations summarising it, so a reader who
@@ -70,9 +107,7 @@ function commanded(message: string): string {
  * exit points at the workflow rather than at what has to change.
  */
 export function publish({ log, note, problems }: Verdict): void {
-  // One call rather than a line at a time: the text is already newline-joined,
-  // and console.log ends it with the newline the last line would otherwise want.
-  if (log !== undefined && log !== "") console.log(log);
+  if (log !== undefined && log !== "") relay(log);
   if (note !== undefined && note !== "") console.log(`::notice::${commanded(note)}`);
   for (const problem of problems) console.log(`::error::${commanded(problem)}`);
   if (problems.length > 0) process.exitCode = 1;
@@ -94,8 +129,10 @@ export function publish({ log, note, problems }: Verdict): void {
  * a line of a dump — so it is not the gate author's to trust, and GitHub ends a
  * workflow command at the newline: a message carrying one followed by
  * `::add-mask::` is a command the runner obeys rather than text it renders.
- * Every other path in this file escapes, and so does this one. dev-config#71 is
- * the same hole upstream.
+ * Every path in this file that writes a workflow command escapes its message,
+ * and this is one of them; the path that writes plain output instead goes
+ * through `relay`, which is a different defence against the same class.
+ * dev-config#71 is both holes upstream.
  */
 export async function entry(run: () => Promise<void>): Promise<void> {
   try {

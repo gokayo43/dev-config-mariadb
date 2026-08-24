@@ -3,14 +3,24 @@
   "extends": ["./node_modules/@gokayo43/dev-config/oxlint.base.json"],
   "env": { "node": true, "es2024": true },
   "ignorePatterns": ["node_modules/**"],
-  "rules": {
-    // One of the base's own rules, off here. Everything this repo grades was
-    // written somewhere else — a consuming repo's package.json, a workflow's
-    // YAML, a row a MariaDB answered with — and none of it has a schema this
-    // repo could hold. The rule exists to push parsing to the boundary; here
-    // the boundary is the product, and `.github/actions/_lib/foreign.ts` is the
-    // one module it is done in. Every `unknown` in the tree is a parameter of
-    // that module or of a reader going straight through it.
-    "anti-slop/no-unknown-parameters": "off"
-  }
+  "overrides": [
+    {
+      "files": [
+        ".github/actions/_lib/foreign.ts",
+        ".github/actions/db-replay/database.ts",
+        "tests/workflow.ts",
+        "tests/wrapper-inputs.test.ts"
+      ],
+      "rules": {
+        // One of the base's own rules, off for these four files and nowhere
+        // else. The rule exists to push parsing to the boundary; these ARE the
+        // boundary. `foreign.ts` is where a document nobody here wrote gets
+        // narrowed, and the other three walk one before they can reach it — a
+        // YAML node, a recursive descent, a row a driver answered `any` for. A
+        // fifth file wanting this is a decision, which is why the list is
+        // written out rather than globbed.
+        "anti-slop/no-unknown-parameters": "off"
+      }
+    }
+  ]
 }

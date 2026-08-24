@@ -60,10 +60,12 @@ async function run(tree: Tree): Promise<Ran> {
 
 /** What the gate threw, as the text a case can read: a rejection is the diagnostic here. */
 async function refusal(tree: Tree): Promise<string> {
-  return await run(tree).then(
-    () => "the gate returned a verdict instead of throwing",
-    (error: unknown) => String(error),
-  );
+  try {
+    await run(tree);
+    return "the gate returned a verdict instead of throwing";
+  } catch (thrown) {
+    return String(thrown);
+  }
 }
 
 /** The tables in the database a URL names, asked of the server rather than of the gate. */
@@ -169,6 +171,97 @@ test("rows written by a second replay do not read as a schema change", async () 
 
   expect(verdict.problems).toEqual([]);
   expect(verdict.note).toContain("replaying them leaves it identical");
+}, 60_000);
+
+/**
+ * SF1, first member. A sequence's position is rendered into a `--no-data` dump
+ * as `DO SETVAL(<seq>, <next>, <cycles>)`, and a migration that consumes a
+ * value moves it — by a thousand, since a sequence's default cache is 1000. The
+ * schema is untouched either way, so a gate comparing the raw dumps refuses
+ * this repo over how many ids have been handed out.
+ */
+test("consuming a sequence value is not a schema change", async () => {
+  // NOCACHE so every NEXTVAL moves the stored position. With the default cache
+  // of 1000 the move happens only when a replay crosses the cache boundary,
+  // which is a real way to hit this and a useless way to test it.
+  const { verdict } = await run({
+    ...migratesFrom(REPLAYING, "drizzle"),
+    ...lineage("drizzle", {
+      tag: "0000_seq",
+      when: 1_000,
+      sql: "CREATE SEQUENCE IF NOT EXISTS `counter` NOCACHE;\nSELECT NEXTVAL(`counter`);\n",
+    }),
+  });
+
+  expect(verdict.problems).toEqual([]);
+  expect(verdict.note).toContain("replaying them leaves it identical");
+}, 60_000);
+
+/**
+ * SF1, second member. `DROP EVENT IF EXISTS` before `CREATE EVENT` is the
+ * idiomatic way to write a re-runnable migration for one — and an event with no
+ * explicit STARTS is stamped with its creation time, so the second replay
+ * re-creates it and re-stamps it. The event is the same event; only the stamp
+ * moved.
+ */
+test("re-creating an event does not read as a schema change", async () => {
+  // The sleep is what makes the case deterministic rather than a coin flip:
+  // STARTS has one-second resolution, and the two replays are otherwise
+  // separated only by however long a dump takes.
+  const { verdict } = await run({
+    ...migratesFrom(REPLAYING, "drizzle"),
+    ...lineage("drizzle", {
+      tag: "0000_event",
+      when: 1_000,
+      sql: "DO SLEEP(1.1);\nDROP EVENT IF EXISTS `sweep`;\nCREATE EVENT `sweep` ON SCHEDULE EVERY 1 DAY DO SELECT 1;\n",
+    }),
+  });
+
+  expect(verdict.problems).toEqual([]);
+  expect(verdict.note).toContain("replaying them leaves it identical");
+}, 60_000);
+
+/**
+ * The second of the two refusals the ticket names, and the branch with its own
+ * bespoke diagnostic. A runner with no journal re-executes every file, so a
+ * `CREATE TABLE` without `IF NOT EXISTS` applies once and aborts on the replay
+ * — a different fault from a history that cannot build from empty, and it says
+ * which of the two runs failed.
+ */
+test("a migration that cannot be applied twice is refused, naming which run failed", async () => {
+  const refused = await refusal({
+    ...migratesFrom(REPLAYING, "drizzle"),
+    ...lineage("drizzle", {
+      tag: "0000_thing",
+      when: 1_000,
+      sql: "CREATE TABLE `thing` (`id` int NOT NULL);\n",
+    }),
+  });
+
+  expect(refused).toContain("failed on its second run");
+  expect(refused).toContain("having just succeeded on its first");
+  expect(refused).toContain("cannot be applied twice");
+}, 90_000);
+
+test("an empty db-image is refused before any migration runs", async () => {
+  const root = await materialise({
+    ...migratesFrom(JOURNALLED, "drizzle"),
+    ...lineage("drizzle", CREATES_THING),
+  });
+  const url = await emptyDatabase();
+
+  const verdict = await replayGate({
+    root,
+    url,
+    image: "",
+    fromEmpty: join(root, "from-empty.schema"),
+    replayed: join(root, "replayed.schema"),
+  });
+
+  expect(verdict.problems).toHaveLength(1);
+  expect(verdict.problems[0]).toContain("db-image input is empty");
+  // Refused before the migrator ran, rather than after two replays.
+  expect(await names(url)).toEqual([]);
 }, 60_000);
 
 test("a project that declares no db:migrate is refused rather than replayed", async () => {
