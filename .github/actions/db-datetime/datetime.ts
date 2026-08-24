@@ -84,9 +84,31 @@ function columnsFrom(rows: readonly Foreign[], database: string): Column[] {
   });
 }
 
-/** How an entry names a column, and the whole of what an allowlist entry is compared against. */
+/** How an entry names a column, and how every diagnostic here spells one. */
 function named({ table_name, column_name }: Column): string {
   return `${table_name}.${column_name}`;
+}
+
+/**
+ * The same name as the server would match it, which is not the same rule on
+ * either side of the dot. Probed on the pinned image, at the default
+ * `lower_case_table_names = 0`:
+ *
+ * - a column is case-insensitive — `select shop.OPENS_AT` reads `opens_at`, and
+ *   a table holding both is refused with `ERROR 1060 Duplicate column name`, so
+ *   folding one cannot collide two columns into a single key;
+ * - a table is NOT — `select … from SHOP` against `shop` is `ERROR 1146`, and
+ *   `Shop` and `shop` coexist as two tables with different columns.
+ *
+ * So the fold stops at the last dot. Folding the whole key would let an entry
+ * for one table waive a DATETIME in another, which is the failure this is
+ * careful about rather than a nicety; the reader who wonders what a dot inside
+ * an identifier does here is answered in docs/gates/db-datetime.md, under what
+ * this gate cannot catch.
+ */
+function matched(subject: string): string {
+  const dot = subject.lastIndexOf(".");
+  return `${subject.slice(0, dot + 1)}${subject.slice(dot + 1).toLowerCase()}`;
 }
 
 /** The one line a green run leaves behind, which has to say what was actually read. */
@@ -127,29 +149,42 @@ export async function datetimeGate(url: string, allowlist: Allowlist): Promise<V
     };
   }
 
-  const wallClock = new Set<string>();
-  const present = new Set<string>();
+  // The catalogue's own spelling is what every diagnostic quotes; `matched` is
+  // only ever the key two spellings of one column meet under.
+  const wallClock: string[] = [];
+  const graded = new Set<string>();
+  const ambiguous = new Set<string>();
   for (const column of columns) {
     const name = named(column);
-    present.add(name);
-    if (column.data_type === WALL_CLOCK) wallClock.add(name);
+    graded.add(matched(name));
+    if (column.data_type === WALL_CLOCK) {
+      wallClock.push(name);
+      ambiguous.add(matched(name));
+    }
   }
 
-  const deliberate = new Set(allowlist.entries);
-  const refusals = [...wallClock]
-    .filter((column) => !deliberate.has(column))
+  const deliberate = new Set(allowlist.entries.map(matched));
+  const refusals = wallClock
+    .filter((column) => !deliberate.has(matched(column)))
     .map(
       (column) =>
         `${column} is a DATETIME — it keeps the digits someone typed and forgets which clock produced them, so one row means two different instants either side of a DST boundary or a server move. Store the instant as TIMESTAMP, or list it in datetime-allowlist if the wall-clock reading is the point.`,
     );
 
-  const fossils = deadEntries(allowlist, wallClock, present, (column, here) =>
+  // Each set holds the ENTRIES that answer to something rather than the columns
+  // they answer to, so that a diagnostic quotes the line its author wrote and
+  // not the catalogue's spelling of it — the two differ exactly when this fixes
+  // something.
+  const answering = (keys: ReadonlySet<string>): ReadonlySet<string> =>
+    new Set(allowlist.entries.filter((entry) => keys.has(matched(entry))));
+
+  const fossils = deadEntries(allowlist, answering(ambiguous), answering(graded), (column, here) =>
     here
-      ? `datetime-allowlist waives ${column}, which is no longer a DATETIME column — the conversion this entry was written against has been made, so drop the entry`
+      ? `datetime-allowlist waives ${column}, which ${database} has as a column that is not a DATETIME — this gate grades DATETIME and nothing else, so there is nothing here to waive and the entry goes`
       : `datetime-allowlist waives ${column}, which ${database} has no column called — drop the entry, or fix the name to match the column it was written for`,
   );
 
   const problems = [...allowlist.problems, ...refusals, ...fossils];
   if (problems.length > 0) return { problems };
-  return { note: passed(database, wallClock.size), problems: [] };
+  return { note: passed(database, wallClock.length), problems: [] };
 }

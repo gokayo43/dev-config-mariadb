@@ -32,9 +32,10 @@ import { type Foreign, isForeign, isList, kindOf, textAt } from "../_lib/foreign
  * The decode is load-bearing and it is also the sharp edge: whatever it returns
  * becomes an argv entry, and `mariadb-dump` reads options after positionals —
  * so a URL whose path spelled `%2D%2Dtab%3D/tmp/x` would arrive as `--tab=…`
- * and write files. Nothing crosses a boundary as shipped, because DATABASE_URL
- * is a literal in check.yml and a caller who can set it is already running
- * their own code in that job. It is written down because the next reader's
+ * and write files. Nothing crosses a boundary as shipped, because the URL a
+ * gate step is handed is a literal in check.yml, read into a step output before
+ * the graded repo runs — the action.yml comment on `database-url` is why it is
+ * handed in rather than inherited. It is written down because the next reader's
  * instinct will be to widen where the URL comes from, and that is the change
  * that would make this reachable.
  */

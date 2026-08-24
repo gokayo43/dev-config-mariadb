@@ -109,19 +109,37 @@ test("an entry with no reason is asked nothing about the column it names", async
 
 /**
  * The first way a waiver dies, and the diagnostic that has to say which: the
- * column is still there and has been converted, so the entry goes. A gate that
- * graded only the wall-clock columns could not tell this from the case below,
- * and would send an author hunting for a column that is in front of them.
+ * column is there and is not graded, so the entry goes. A gate that graded only
+ * the wall-clock columns could not tell this from the case below, and would
+ * send an author hunting for a column that is in front of them.
  */
-test("an entry for a column that is no longer DATETIME is refused, naming the conversion", async () => {
+test("an entry for a column that is not a DATETIME is refused, naming that it is there", async () => {
   const url = await built("create table `shop` (`id` int primary key, `opens_at` timestamp null)");
 
   const verdict = await datetimeGate(url, allowing(`shop.opens_at${REASONED}`));
 
   expect(verdict.problems).toHaveLength(1);
-  expect(verdict.problems[0]).toContain("no longer a DATETIME column");
-  expect(verdict.problems[0]).toContain("drop the entry");
+  expect(verdict.problems[0]).toContain("has as a column that is not a DATETIME");
+  expect(verdict.problems[0]).toContain("the entry goes");
   expect(verdict.problems[0]).not.toContain("no column called");
+}, 60_000);
+
+/**
+ * And it says only that. The catalogue holds one row for a column that was
+ * converted out of DATETIME and one for a column that never was, and they are
+ * the same row — so a diagnostic announcing "the conversion has been made" is
+ * telling an author about history the gate cannot see. The most plausible wrong
+ * implementation is exactly that sentence, and this is the column that makes it
+ * a lie: an `int` primary key nobody ever stored an instant in.
+ */
+test("the refusal above claims no history, because the catalogue records none", async () => {
+  const url = await built("create table `shop` (`id` int primary key, `opens_at` timestamp null)");
+
+  const verdict = await datetimeGate(url, allowing(`shop.id${REASONED}`));
+
+  expect(verdict.problems).toHaveLength(1);
+  expect(verdict.problems[0]).toContain("shop.id");
+  expect(verdict.problems[0]).not.toContain("conversion");
 }, 60_000);
 
 /** The other way, and the other half of the same rule: nothing answers to the name at all. */
@@ -289,5 +307,44 @@ test("the migrator's own journal is graded like any other table", async () => {
 
   expect(verdict.problems).toEqual([
     expect.stringContaining("__drizzle_migrations.created_at is a DATETIME"),
+  ]);
+}, 60_000);
+
+/**
+ * A column answers to its name in any case, because the server does: probed on
+ * the pinned image, `select shop.OPENS_AT` reads `opens_at`. A gate comparing
+ * the two as text charges one mistake twice — it refuses the column as
+ * unwaived AND refuses the entry as naming nothing — and the second diagnostic
+ * is false to any reader who can select the column by the name they wrote.
+ */
+test("an entry naming a column in another case waives it, and earns no diagnostic", async () => {
+  const url = await built("create table `shop` (`id` int primary key, `opens_at` datetime)");
+
+  const verdict = await datetimeGate(url, allowing(`shop.OPENS_AT${REASONED}`));
+
+  expect(verdict.problems).toEqual([]);
+  expect(verdict.note).toContain("1 DATETIME column is allowlisted");
+}, 60_000);
+
+/**
+ * And the fold stops at the last dot, because the server's rule does. A table
+ * is case-SENSITIVE here (`lower_case_table_names = 0`, the pinned image's
+ * default), so `Shop` and `shop` are two tables and can hold different types
+ * under one column name. The most plausible wrong implementation of the case
+ * above is a fold over the whole `table.column` key — which would read this
+ * entry as waiving the DATETIME in `shop`, and pass a schema this gate exists
+ * to refuse.
+ */
+test("an entry for another table in another case waives nothing in this one", async () => {
+  const url = await built(
+    "create table `shop` (`id` int primary key, `opens_at` datetime)",
+    "create table `Shop` (`id` int primary key, `opens_at` timestamp null)",
+  );
+
+  const verdict = await datetimeGate(url, allowing(`Shop.opens_at${REASONED}`));
+
+  expect(verdict.problems).toEqual([
+    expect.stringContaining("shop.opens_at is a DATETIME"),
+    expect.stringContaining("waives Shop.opens_at"),
   ]);
 }, 60_000);

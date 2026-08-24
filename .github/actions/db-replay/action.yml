@@ -1,14 +1,17 @@
 name: MariaDB replay gate
 description: >-
   Replays the calling repo's own db:migrate onto the empty MariaDB the caller
-  declared, twice, and compares the two schema dumps. DATABASE_URL is read from
-  the environment — the caller declares the service, so it owns the URL, and one
-  value means no two steps can disagree about which database was migrated.
-  docs/gates/db-replay.md is what each half proves and what it cannot catch.
+  declared, twice, and compares the two schema dumps. The caller declares the
+  service, so it owns the URL and hands it in; one value means no two steps can
+  disagree about which database was migrated. docs/gates/db-replay.md is what
+  each half proves and what it cannot catch.
 
 inputs:
   working-directory:
-    description: Where the project lives.
+    description: >-
+      Where the project lives, relative to the checkout. The migrator runs
+      there; this gate does not, and passes it as an explicit path rather than
+      by being run there itself.
     default: .
   db-image:
     description: >-
@@ -28,20 +31,57 @@ inputs:
       caller can pass this straight through without having to know how "unset"
       is spelled.
     default: ""
+  database-url:
+    description: >-
+      The database to migrate into, as the calling job read it before running a
+      line of the graded repo's code. An input rather than an inherited
+      variable because a step of the graded repo's own can export one for every
+      later step to inherit, and the database this gate replays into is not
+      that repo's to choose.
+    required: true
+  bun:
+    description: >-
+      The absolute path to the interpreter this gate runs under, from the same
+      reading. A bare `bun` is resolved through a PATH the graded repo's own
+      steps can prepend to, which replaces this gate with a program that exits 0.
+    required: true
 
 runs:
   using: composite
   steps:
     - name: Replay the migrations
       shell: bash
-      working-directory: ${{ inputs.working-directory }}
+      # The action's own checkout, never the graded repo's. `bun` reads a
+      # top-level `preload` out of a `bunfig.toml` in its working directory
+      # (probed: only that directory — no parent is walked, and no global file
+      # is read), so a gate running in the graded checkout runs whatever that
+      # repo's bunfig names, before a line of the gate. The migrator still runs
+      # in the project below, by the path this step hands the gate.
+      working-directory: ${{ github.action_path }}
       env:
         INPUT_DB_IMAGE: ${{ inputs['db-image'] }}
         INPUT_FROM_EMPTY: ${{ runner.temp }}/replay-from-empty.schema
         INPUT_REPLAYED: ${{ runner.temp }}/replay-again.schema
+        INPUT_BUN: ${{ inputs.bun }}
+        # `github.workspace` is an expression context rather than a variable, so
+        # nothing a step writes reaches it — which is what makes this an
+        # explicit path and not the same inheritance the cwd above just gave up.
+        INPUT_PROJECT: ${{ github.workspace }}/${{ inputs['working-directory'] }}
+        # Declared by this step, which is what makes it this step's: the runner
+        # overlays a step's own `env:` over the environment it inherited, so a
+        # variable of this name written into $GITHUB_ENV earlier does not reach
+        # the gate.
+        DATABASE_URL: ${{ inputs['database-url'] }}
       run: |
         set -euo pipefail
-        bun "$GITHUB_ACTION_PATH/replay.main.ts"
+        # A composite action maps an input nobody passed to the empty string, so
+        # `required: true` above is a promise nothing enforces at runtime — and
+        # an empty interpreter is `command not found` naming nothing.
+        [ -n "$INPUT_BUN" ] || {
+          echo "::error::the bun input is empty — the calling job passes the interpreter this gate runs under, read before the graded repo's code could put another one on PATH"
+          exit 1
+        }
+        "$INPUT_BUN" "$GITHUB_ACTION_PATH/replay.main.ts"
 
     # The two dumps, which are deleted with the runner. A run that failed on the
     # comparison is exactly when they are worth having, and a cancelled one has

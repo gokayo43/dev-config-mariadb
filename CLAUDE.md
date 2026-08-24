@@ -46,10 +46,13 @@ that has been improved says so at the line that improved it.
   `refusals` job that fails a call asking for a database-job input without the
   job, and `replay` (`#2`), which carries the DATETIME gate (`#5`) as a step
   after it — that gate grades the catalogue the migrations built, so it runs
-  where that schema is. The remaining MariaDB database jobs land beside them
-  (`#3`, `#4`, `#6`), each with the composite action that runs it, its own
-  suite, and its page under `docs/gates/` — the shape dev-config's "Adding a
-  gate" describes.
+  where that schema is. Both gate steps are handed the database and the
+  interpreter by a step that reads them at the top of that job, before a line of
+  the graded repo's own code has run; a gate added beside them takes the same
+  two, and the comment there says why. The remaining MariaDB database jobs land
+  beside them (`#3`, `#4`, `#6`), each with the composite action that runs it,
+  its own suite, and its page under `docs/gates/` — the shape dev-config's
+  "Adding a gate" describes.
 - `.github/workflows/ci.yml` — this repo's own gate, which is dev-config's
   `check.yml` called directly. It cannot be the wrapper: a commit cannot pin its
   own SHA, so the wrapper's pin is always one commit behind whatever is under
@@ -72,10 +75,14 @@ that has been improved says so at the line that improved it.
   `database: false`, only one job calls that workflow at all, what the README
   tables and what it says is refused cover dev-config's input surface exactly,
   the four carriers of the dev-config pin agree, every action pin names a commit
-  this repo carries, and the server image is written once as far as a reader is
-  concerned. `refusals.test.ts` runs the wrapper's own `run:` block — extracted
-  from the shipped YAML rather than transcribed — over the whole truth table of
-  the one behavioural rule this workflow adds. The rest of the suite drives the
+  this repo carries AND one whose `.github/actions` is the tree here now, and
+  the server image is written once as far as a reader is concerned.
+  `refusals.test.ts` runs the wrapper's own `run:` block — extracted from the
+  shipped YAML rather than transcribed — over the whole truth table of the one
+  behavioural rule this workflow adds, and `action-steps.test.ts` runs the
+  shipped `run:` block of each action against a checkout that fights back — a
+  `bunfig.toml` preloading its own code, a `DATABASE_URL` naming a database of
+  its own, a `bun` of its own first on PATH. The rest of the suite drives the
   gates against real MariaDB containers it starts and removes itself, which is
   why `ci.yml` sets `test-network`.
 
@@ -119,7 +126,8 @@ Two consequences, both live from the first action this repo shipped:
 
 - **A change to an action is two commits**, the second re-pinning the first.
   `tests/wrapper-inputs.test.ts` fails when a pin names a commit this repo does
-  not carry, which is the loud half.
+  not carry, and when it names one whose actions are no longer the actions here
+  — a pin that resolves but ships something else is the half nobody notices.
 - **The pinned commit has to survive.** A squash merge orphans it, and an
   orphaned pin is an action GitHub cannot fetch — a database job that fails for
   every consumer at once. Tagging the release is what keeps it reachable, and

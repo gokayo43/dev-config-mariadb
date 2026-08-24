@@ -23,6 +23,9 @@ const REFUSED = "refused here rather than forwarded";
 
 const INSTALLED = "node_modules/@gokayo43/dev-config/.github/workflows/check.yml";
 
+/** Everything a consumer fetches when it resolves an action pin of this repo. */
+const ACTIONS = ".github/actions";
+
 /**
  * The inputs this wrapper declares that dev-config has no name for at all.
  *
@@ -358,6 +361,51 @@ test("every action the wrapper pins is a commit this repo carries", async () => 
       stderr: "ignore",
     });
     expect(`${pin} resolves: ${(await proc.exited) === 0}`).toBe(`${pin} resolves: true`);
+  }
+});
+
+/** What git calls the tree of `.github/actions` at a commit, which is every byte a consumer fetches. */
+async function actionsTree(commit: string): Promise<string> {
+  const proc = Bun.spawn(["git", "rev-parse", `${commit}:${ACTIONS}`], {
+    cwd: root,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [id, why] = await Promise.all([
+    new Response(proc.stdout).text(),
+    new Response(proc.stderr).text(),
+  ]);
+  if ((await proc.exited) !== 0)
+    throw new Error(`${commit}:${ACTIONS} is not a tree — ${why.trim()}`);
+  return id.trim();
+}
+
+/**
+ * And it is the CURRENT one, which reachability alone never asked.
+ *
+ * A pin that resolves can still name a commit whose actions have been changed
+ * since — and then a consumer fetches an action this repo reviewed, merged and
+ * moved on from, while every gate here grades the tree at HEAD. Shipped
+ * behaviour and reviewed behaviour part company with nothing red anywhere, and
+ * the older the pin the longer nobody notices: exactly the state this repo was
+ * in when `db-replay` was pinned two changes back.
+ *
+ * The whole directory rather than each action's own, because that is what a
+ * consumer's checkout of a pinned commit contains and what these actions import
+ * across: `db-datetime` reads its catalogue through `db-replay/database.ts` and
+ * both read `_lib/`, so an action's shipped behaviour is not bounded by its own
+ * directory. One tree per pin also means one rule rather than a map of which
+ * directory each pin owns.
+ *
+ * A commit cannot name itself, so the pin is one commit behind by design —
+ * CLAUDE.md, "Releasing an action". Trees are what that costs nothing: the
+ * re-pinning commit touches the workflow and leaves this tree alone.
+ */
+test("every action the wrapper pins ships the actions this repo has now", async () => {
+  const here = await actionsTree("HEAD");
+  for (const pin of [...stringsIn(wrapper.document)].filter((text) => OWN_ACTION.test(text))) {
+    const sha = captured(OWN_ACTION.exec(pin)?.[1], "OWN_ACTION");
+    expect(`${pin} ships ${await actionsTree(sha)}`).toBe(`${pin} ships ${here}`);
   }
 });
 

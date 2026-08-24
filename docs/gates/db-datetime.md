@@ -66,6 +66,14 @@ Entries are one per line rather than space-separated because an identifier can
 hold a space: `` `opening hours` `` and `` `opens at` `` are legal names, and
 `opening hours.opens at -- why` is how one is waived.
 
+**The column is matched whatever its case; the table is not.** That is the
+server's own rule rather than a convenience, probed on the pinned image at its
+default `lower_case_table_names = 0`: `select shop.OPENS_AT` reads `opens_at`,
+while `SHOP` is a table `shop` does not answer to — `Shop` and `shop` can both
+exist, holding different columns. So `shop.OPENS_AT -- why` waives `opens_at`
+and `Shop.opens_at -- why` waives nothing in `shop`. A gate that folded the
+whole key would let an entry for one table waive a `DATETIME` in another.
+
 Each entry carries `-- why`, the same price a lint directive pays: an exemption
 nobody had to justify is one nobody can review a year later. An entry without a
 reason fails the step — and still exempts its column, because reporting the
@@ -75,8 +83,10 @@ An entry is refused when nothing under grade answers to it, which is the other
 half of the same rule. The step reads every column in the database, not only the
 `DATETIME` ones, so it can say which of the two ways an entry died:
 
-- the column is still here and is no longer `DATETIME` — the conversion the
-  entry exempted it from has been made, so the entry goes;
+- the column is here and is not `DATETIME` — there is nothing to waive, so the
+  entry goes. The gate says that and no more: a column converted since the entry
+  was written and a column that never was one are the same single row in the
+  catalogue, and which of them happened is not something a schema records;
 - the database has no column of that name at all — dropped, renamed, or never
   spelled the way the entry spells it, so the entry goes or the name does.
 
@@ -155,10 +165,12 @@ gets trusted for things it never checked.
 - **Whether an allowlist entry's reason is true.** The gate enforces that a
   reason was written, not that it is honest. That is a review, and the entry is
   in the call for a reviewer to read.
-- **A column whose name contains `--`.** MariaDB accepts `` `a -- b` `` as an
-  identifier; the allowlist splits an entry at the first `--`, so such a
-  column cannot be waived and its entry would be refused as naming nothing.
-  Renaming the column is the fix, and no consumer has one.
+- **A column whose name contains `` ` -- ` ``** — the separator with a space
+  either side, which is the whole of it: `dashes.a--b -- why` waives `a--b`
+  cleanly (probed), and only the spaced spelling collides. MariaDB accepts
+  `` `a -- b` `` as an identifier, an entry for it is read as a subject and a
+  reason nobody wrote, and the column cannot be waived. Renaming it is the fix,
+  and no consumer has one.
 - **A column whose name contains a newline.** Probed: `` `a\nb` `` is a legal
   identifier and the catalogue reports it as one. Entries are one per line, so
   an entry for it is read as two subjects nobody wrote — same shape as the
