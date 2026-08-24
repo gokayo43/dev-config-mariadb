@@ -1,4 +1,3 @@
-import { afterEach } from "bun:test";
 import { join } from "node:path";
 
 import { killGroup, shellGroup } from "../.github/actions/db-serving/group.ts";
@@ -23,13 +22,15 @@ const running: string[] = [];
 
 /**
  * Every app any case started, taken down after it — by the process group, so
- * that a shell between this suite and the app goes with it. Registered here
- * rather than in each case: a case that failed before its own cleanup would
- * otherwise leave a server on a port for the rest of the run.
+ * that a shell between this suite and the app goes with it. Called from
+ * `tests/preload.ts` rather than registered here, for the reason `tree.ts` says
+ * at `removeRoots`: a hook at the top level of an imported module attaches to
+ * the file that imported it first, and an app left running holds a port and a
+ * database connection for the rest of the run and after it.
  */
-afterEach(async () => {
+export async function stopApps(): Promise<void> {
   for (const file of running.splice(0)) await stop(file);
-});
+}
 
 /** The app whose pid is in this file, and everything it started. */
 export async function stop(pidFile: string): Promise<void> {
