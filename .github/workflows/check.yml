@@ -176,6 +176,14 @@ jobs:
 
       - run: bun install --frozen-lockfile
 
+      # The same step dev-config's database job runs, and for the same reason: a
+      # repo whose migrator is generated — a schema compiled out of TypeScript, a
+      # lineage a build writes — has nothing for this job to replay until the
+      # build has run. Without it such a repo is refused for declaring no
+      # migrations, which is a false answer to the question this gate asks.
+      - if: inputs.build
+        run: bun run build
+
       # By full path and SHA rather than `./`: inside a called workflow a
       # relative `uses:` resolves against the CALLER's checkout, where this
       # repo's actions are not. The consequence is that the action and the

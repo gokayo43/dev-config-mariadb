@@ -1,14 +1,7 @@
 import type { Verdict } from "../_lib/annotations.ts";
 import { mapAt, textAt } from "../_lib/foreign.ts";
-import {
-  compare,
-  databaseIn,
-  type Dump,
-  dumpOf,
-  migrate,
-  objectsIn,
-  schemaIn,
-} from "./database.ts";
+import { databaseIn, dumpOf, JOURNAL, migrate, objectsIn } from "./database.ts";
+import { compare, type Dump } from "./schema.ts";
 
 /**
  * What a repo's migration history is asked to prove here, and it is one
@@ -76,18 +69,6 @@ const DUMP = ["--no-data", "--skip-dump-date", "--routines", "--events", "--trig
 async function schemaOf(url: string, image: string, of: string): Promise<Dump> {
   const dumped = await dumpOf(url, image, DUMP);
   return { of, units: dumped.split("\n").map((line) => line.replace(COUNTER, "$1")) };
-}
-
-/**
- * A dump as the run leaves it behind. Written as it is taken rather than at the
- * end, so that a run which failed on the way to the second one still ships the
- * first: the dump a comparison never got to make is exactly the evidence
- * somebody wants, and reproducing it by re-running with more printing is the
- * shape of debugging every diagnostic here exists to avoid.
- */
-async function keep(dump: Dump, at: string): Promise<Dump> {
-  await Bun.write(at, `${dump.units.join("\n")}\n`);
-  return dump;
 }
 
 /** Where the gate replays, what it replays with, and where the evidence goes. */
@@ -164,7 +145,7 @@ export async function replayGate({
   // exactly like a clean rebuild. The journal is left out of the count on
   // purpose: a migrator that recorded having applied nothing leaves that table
   // and nothing else, which is the shape this refuses.
-  const built = schemaIn(await objectsIn(url));
+  const built = (await objectsIn(url)).filter((name) => name !== JOURNAL);
   if (built.length === 0) {
     return {
       problems: [
@@ -173,17 +154,20 @@ export async function replayGate({
     };
   }
 
-  const fresh = await keep(await schemaOf(url, image, "the schema built from empty"), fromEmpty);
+  // Each schema is written out as it is taken rather than after a comparison
+  // that may never happen: the dump a run never got to compare is exactly the
+  // evidence somebody wants, and reproducing it by re-running with more
+  // printing is the shape of debugging every diagnostic here exists to avoid.
+  const fresh = await schemaOf(url, image, "the schema built from empty");
+  await Bun.write(fromEmpty, `${fresh.units.join("\n")}\n`);
 
   await migrate(
     root,
     url,
     `bun run ${SCRIPT} failed on its second run over ${database}, having just succeeded on its first — the migrator's own output above names the statement. It met a database that already carries its effects, so either the runner is re-executing what it has applied or that statement cannot be applied twice.`,
   );
-  const again = await keep(
-    await schemaOf(url, image, "the schema after a second replay"),
-    replayed,
-  );
+  const again = await schemaOf(url, image, "the schema after a second replay");
+  await Bun.write(replayed, `${again.units.join("\n")}\n`);
 
   const changed = compare(fresh, again);
   if (changed === undefined) return { note: REPLAYED, problems: [] };

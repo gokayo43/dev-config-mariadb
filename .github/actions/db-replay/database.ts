@@ -4,16 +4,30 @@ import { type Foreign, isForeign, isList, kindOf, textAt } from "../_lib/foreign
 
 /**
  * Not a gate. What a gate here needs a MariaDB for: what the server says it
- * holds, how the repo's own migrator is run against it, how a schema is read
- * back as text, and the single derivation of "these two came out the same".
+ * holds, how the repo's own migrator is run against it, and how a schema is
+ * read back as text. Comparing two of them is `schema.ts`, which is pure and
+ * kept out of here for that reason.
  *
- * One derivation of "the same" rather than one per gate, because the replay,
- * the upgrade path and the integration lane all ask that question of two
- * schemas, and two answers to it would leave nobody able to say which was
- * right the day they disagreed.
+ * **Three functions below are checked-in copies of dev-config's
+ * `.github/actions/db-gate/database.ts` at the pinned SHA**, not independent
+ * work: `databaseIn`, `migrate` and `rowsIn` (theirs is `rows`). An action runs
+ * from a checkout with no `node_modules` above it and `.github/` is outside
+ * dev-config's `files` allowlist, so there is no import that reaches them —
+ * dev-config#69 is where publishing them in a reachable form is argued, and
+ * CLAUDE.md's "It only adds" rule carries the carve-out. Each names its own
+ * delta below; anything not named is theirs verbatim, and a bug fixed there is
+ * a bug still here until somebody carries it over.
  */
 
-/** The database a URL names, for the tool that takes one and for the diagnostics. */
+/**
+ * The database a URL names, for the tool that takes one and for the
+ * diagnostics.
+ *
+ * dev-config's, plus `decodeURIComponent`: a MySQL database name may hold
+ * characters a URL has to percent-encode, and `mariadb-dump` is handed this as
+ * an argument rather than as part of a URL. Postgres names reach their tool
+ * inside the URL, so upstream never has to undo the encoding.
+ */
 export function databaseIn(url: string): string {
   return decodeURIComponent(new URL(url).pathname.replace(/^\//u, ""));
 }
@@ -26,6 +40,10 @@ export function databaseIn(url: string): string {
  * assertion is the only thing between a renamed column and a `TypeError` three
  * frames from the query. The answer is refused here instead, where the SQL that
  * produced it is still in hand to name.
+ *
+ * dev-config's `rows`, with one delta: it takes the answer rather than running
+ * the query, because the one caller here needs parameters bound and theirs does
+ * not. The diagnostics are theirs word for word.
  */
 function rowsIn(answered: unknown, query: string): readonly Foreign[] {
   if (!isList(answered)) {
@@ -45,13 +63,13 @@ function rowsIn(answered: unknown, query: string): readonly Foreign[] {
  * so the two spellings are not interchangeable and a reader who knows the
  * Postgres one would look in the wrong place.
  *
- * It is named here because `objectsIn` below has to be able to tell the
- * migrator's own bookkeeping from the schema a migration built: a `db:migrate`
- * that records having applied nothing leaves exactly this table and nothing
- * else, and counting it as schema is how a repo with no migrations at all
- * passes a gate that replays them.
+ * It is exported because a gate has to be able to tell the migrator's own
+ * bookkeeping from the schema a migration built: a `db:migrate` that records
+ * having applied nothing leaves exactly this table and nothing else, and
+ * counting it as schema is how a repo with no migrations at all passes a gate
+ * that replays them.
  */
-const JOURNAL = "__drizzle_migrations";
+export const JOURNAL = "__drizzle_migrations";
 
 /**
  * Everything the database holds that a schema dump would carry: its tables,
@@ -88,11 +106,6 @@ export async function objectsIn(url: string): Promise<string[]> {
   }
 }
 
-/** The same, minus the migrator's own journal: what the migrations themselves built. */
-export function schemaIn(objects: readonly string[]): string[] {
-  return objects.filter((name) => name !== JOURNAL);
-}
-
 /**
  * The repo's own migrator, which is the only one there is: nothing here writes
  * SQL. Its output is the developer's — the statement that would not apply, and
@@ -102,6 +115,10 @@ export function schemaIn(objects: readonly string[]): string[] {
  * `failed` is the whole diagnostic rather than a database name, because this
  * runs more than once per gate and "the second one failed" names something the
  * author has never heard of.
+ *
+ * dev-config's, with their `against` folded in: they route two commands through
+ * it — the migrator and a repo's own shell — and this gate runs only the first,
+ * so the indirection had one caller and no second one to justify it.
  */
 export async function migrate(root: string, url: string, failed: string): Promise<void> {
   const proc = Bun.spawn(["bun", "run", "db:migrate"], {
@@ -176,87 +193,4 @@ export async function dumpOf(url: string, image: string, args: readonly string[]
     );
   }
   return stdout;
-}
-
-/**
- * A schema as a diagnostic about it has to name it, cut into the lines it is
- * compared in.
- *
- * Lines, and in the order the dump wrote them: `mariadb-dump` renders the
- * catalogue in a fixed order, so two dumps holding the same statements in a
- * different arrangement really are two different databases. Nothing here is
- * sorted, which is also why a line is a safe unit — a statement spanning
- * several of them cannot have its fragments traded with another statement's.
- */
-export interface Dump {
-  readonly of: string;
-  readonly units: readonly string[];
-}
-
-/** How two schemas differ. There is no such thing as an empty one. */
-export interface Difference {
-  /** What the log gets: every line the two do not share, addressed to whichever has it. */
-  readonly lines: readonly string[];
-  /** What the annotation gets: the shortest true sentence about it. */
-  readonly headline: string;
-}
-
-/** How many times each line occurs, since a dump repeats `SET`s and blank lines. */
-function tally(units: readonly string[]): Map<string, number> {
-  const counts = new Map<string, number>();
-  for (const unit of units) {
-    if (unit.trim() !== "") counts.set(unit, (counts.get(unit) ?? 0) + 1);
-  }
-  return counts;
-}
-
-/**
- * The lines `dump` carries that `other` does not, in the order they first
- * appeared. A line carried twice on one side and once on the other is listed
- * once, for the copy that has no partner.
- */
-function only(dump: readonly string[], other: readonly string[]): string[] {
-  const theirs = tally(other);
-  const lines: string[] = [];
-  for (const [unit, count] of tally(dump)) {
-    for (let extra = count - (theirs.get(unit) ?? 0); extra > 0; extra--) lines.push(unit);
-  }
-  return lines;
-}
-
-/**
- * The single derivation of "these two came out the same". `undefined` is the
- * only way two schemas are equal, and every other answer carries both a
- * headline and something to print — so a refusal with nothing to say for itself
- * cannot be built, which is the one thing no gate here may produce.
- *
- * Joining on a newline to compare looks as though it could equate two different
- * cuttings and cannot: both sides were cut from a dump by the same split, so
- * two line lists that join to the same string were cut from the same string.
- */
-export function compare(left: Dump, right: Dump): Difference | undefined {
-  if (left.units.join("\n") === right.units.join("\n")) return undefined;
-
-  const sides = [
-    { dump: left, lines: only(left.units, right.units) },
-    { dump: right, lines: only(right.units, left.units) },
-  ].filter(({ lines }) => lines.length > 0);
-
-  // Every line one holds, the other holds as often — so what differs is the
-  // arrangement: the order of the statements, or the blank lines between them.
-  // Which of the two it is, this does not know, and saying would be a guess.
-  if (sides.length === 0) {
-    const arranged = `${left.of} and ${right.of} differ, but not in which lines they hold — the same lines are in a different order`;
-    return { lines: [arranged], headline: arranged };
-  }
-
-  return {
-    lines: sides.flatMap(({ dump, lines }) => lines.map((line) => `only in ${dump.of}: ${line}`)),
-    headline: sides
-      .map(
-        ({ dump, lines }) =>
-          `${dump.of} alone has ${lines.length} line${lines.length === 1 ? "" : "s"}, first \`${lines[0]}\``,
-      )
-      .join(", "),
-  };
 }

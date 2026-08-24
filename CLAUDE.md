@@ -13,11 +13,29 @@ thing that could not live there.
 
 ## The rule this repo exists to keep
 
-**It only adds.** No file here is a copy of a dev-config file, no gate here
-loosens one of theirs, and the static half is a call rather than a fork. A
-change that would be better made in dev-config is made in dev-config: this repo
-is for what is MariaDB-shaped and nothing else. Anything that reads as "the base
-should have this too" is an issue there, not a second implementation here.
+**It only adds.** No gate here loosens one of theirs, and the static half is a
+call rather than a fork. A change that would be better made in dev-config is
+made in dev-config: this repo is for what is MariaDB-shaped and nothing else.
+Anything that reads as "the base should have this too" is an issue there, not a
+second implementation here.
+
+**The one carve-out: the gate library.** A composite action runs from a checkout
+of its own repo with no `node_modules` above it, and `.github/` is outside
+dev-config's `files` allowlist — so nothing under `.github/actions/` here can
+import from the dev-config this repo installs, by any route. Two files are
+therefore checked-in copies of theirs at the pinned SHA, and each says so in its
+own header with its deltas named: `_lib/annotations.ts` (their `_lib/gate.ts`)
+and the three functions `db-replay/database.ts` names (`databaseIn`, `migrate`,
+`rowsIn`). [dev-config#69](https://github.com/gokayo43/dev-config/issues/69) is
+where ending that is argued.
+
+The carve-out is for what the runtime makes unreachable, and nothing else. It is
+not licence to fork a gate: an assertion, a diagnostic or a rule that could live
+in dev-config still belongs there. And it cuts both ways — a bug fixed there is
+a bug still here until somebody carries it over, and two fixes have so far gone
+the other way ([dev-config#70](https://github.com/gokayo43/dev-config/issues/70),
+[#71](https://github.com/gokayo43/dev-config/issues/71)), which is why a copy
+that has been improved says so at the line that improved it.
 
 ## Layout
 
@@ -33,10 +51,12 @@ should have this too" is an issue there, not a second implementation here.
   own SHA, so the wrapper's pin is always one commit behind whatever is under
   review.
 - `.github/actions/` — the gates themselves, one directory per job, each a
-  `<name>.ts` the suite drives and a `<name>.main.ts` the action runs. `_lib/`
-  is what they share: `annotations.ts` is the log protocol, written here rather
-  than reached for because an action runs from a checkout with no
-  `node_modules` in it — [dev-config#69](https://github.com/gokayo43/dev-config/issues/69).
+  `<name>.ts` the suite drives and a `<name>.main.ts` the action runs. Beside
+  them: `db-replay/database.ts` is everything that talks to a server, and
+  `db-replay/schema.ts` is the pure comparison two schemas go through — split so
+  that `#3`–`#6` can reuse the second without the first. `_lib/` is what every
+  action shares: `annotations.ts` (the log protocol) and `foreign.ts` (the one
+  place a document nobody here wrote is narrowed).
 - `tests/` — what CI cannot see from outside. `wrapper-inputs.test.ts` grades
   the wrapper and the README against the dev-config in `node_modules`, which is
   the commit the workflows call: every input the wrapper hands on reaches the
@@ -47,9 +67,11 @@ should have this too" is an issue there, not a second implementation here.
   tables and what it says is refused cover dev-config's input surface exactly,
   the four carriers of the dev-config pin agree, the action pin names a commit
   this repo carries, and the server image is written once as far as a reader is
-  concerned. The rest of the suite drives the gates against real MariaDB
-  containers it starts and removes itself, which is why `ci.yml` sets
-  `test-network`.
+  concerned. `refusals.test.ts` runs the wrapper's own `run:` block — extracted
+  from the shipped YAML rather than transcribed — over the whole truth table of
+  the one behavioural rule this workflow adds. The rest of the suite drives the
+  gates against real MariaDB containers it starts and removes itself, which is
+  why `ci.yml` sets `test-network`.
 
 ## The server this repo is written against
 

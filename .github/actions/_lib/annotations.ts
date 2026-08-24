@@ -4,13 +4,26 @@
 // GitHub checks the whole repository out to run an action, so a gate may import
 // across action directories; only the directory named in `uses:` is the action.
 //
-// dev-config has a library of this name and shape for its own gates, and this
-// is not a copy of it: an action runs from a checkout with no node_modules in
-// it, so nothing under .github/actions here can import from the dev-config this
-// repo installs. Kept to what the gates here actually write, so the two never
-// have to be read side by side.
-// dev-config#69 is where publishing this protocol in a form a sibling action
-// repo can reach is argued.
+// **This is a checked-in copy of dev-config's `.github/actions/_lib/gate.ts` at
+// the pinned SHA**, cut down to what the gates here write. `inputs` and
+// `required` are theirs verbatim; `commanded`, `publish` and `entry` are theirs
+// with the deltas named below. It is a copy because there is no import that
+// could reach the original: an action runs from a checkout with no node_modules
+// above it, and `.github/` sits outside dev-config's `files` allowlist, so the
+// only copy on disk anywhere is in a consuming repo's workspace rather than in
+// the action's. dev-config#69 is where publishing it in a reachable form is
+// argued; CLAUDE.md's "It only adds" rule carries the carve-out that lets this
+// file exist. A bug fixed there is a bug still here until somebody carries it
+// over — and one of them has already been fixed here and not there, see `entry`.
+//
+// Deltas from upstream, all deliberate:
+//   * `Verdict.problems` is `readonly string[]` rather than their `Problem[]`.
+//     Every problem this repo's gates raise is about a database rather than
+//     about a line of the tree, and `file=`/`line=` on an annotation that
+//     pointed at nothing would be dropped by GitHub in silence.
+//   * `publish` is synchronous and writes no run summary: no gate here
+//     publishes a table yet.
+//   * `entry` escapes the caught error — see there.
 
 /**
  * What a gate answers with. `problems` is what fails the step, `log` is the
@@ -74,6 +87,15 @@ export function publish({ log, note, problems }: Verdict): void {
  * It exits rather than returning, because a gate that died mid-read may be
  * holding something that keeps the runtime alive, and a step waiting on that
  * costs the job's whole timeout to say what it already knows.
+ *
+ * **The `commanded` call below is a deliberate divergence from dev-config**,
+ * whose `entry` writes the caught message raw. A thrown message here quotes
+ * what the gate read off the repository under grade — a database name, a path,
+ * a line of a dump — so it is not the gate author's to trust, and GitHub ends a
+ * workflow command at the newline: a message carrying one followed by
+ * `::add-mask::` is a command the runner obeys rather than text it renders.
+ * Every other path in this file escapes, and so does this one. dev-config#71 is
+ * the same hole upstream.
  */
 export async function entry(run: () => Promise<void>): Promise<void> {
   try {

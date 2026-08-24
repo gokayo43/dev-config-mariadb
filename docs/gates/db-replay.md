@@ -47,13 +47,24 @@ dumps of one database taken a second apart are byte-identical once
 `--skip-dump-date` has stopped the tool writing a timestamp. The header, the
 compatibility `SET`s, the `DEFINER` on every view and trigger, the `STARTS`
 clause on an event — all stable. So a line that moves is a line worth failing
-over, and a red run prints every line the two do not share, addressed to
-whichever schema has it.
+over.
 
-There is no such thing as a refusal with nothing under it. Where the two hold
-the same lines in a different order there is no line to name, and the gate says
-that instead — a red step with an empty explanation is the one thing no gate
-here may produce.
+A red run names **where** the two part. Both dumps come from one tool through
+one split, so index `n` is line `n + 1` of both files: the gate walks them in
+step to the first line they disagree on, puts that line number and both sides'
+line on the annotation, and prints each side's own lines from there into the
+log. That tail is bounded — one inserted line makes every later line differ, so
+an unbounded one would print most of the schema on the commonest failure there
+is — and what is cut is counted rather than dropped. Both dumps leave the run
+whole in the artifact, so the log's job is to point rather than to reproduce.
+
+There is no such thing as a refusal with nothing under it, and that is
+structural rather than careful: each side always contributes at least the
+sentence saying where it parted, so a difference with an empty log cannot be
+built. A red step with an empty explanation is the one thing no gate here may
+produce, and the way to fail that is a comparison that subtracts two sets and
+finds nothing left to say — which is exactly what
+[dev-config#70](https://github.com/gokayo43/dev-config/issues/70) is.
 
 ## Where the client comes from
 

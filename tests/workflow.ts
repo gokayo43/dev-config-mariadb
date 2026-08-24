@@ -1,6 +1,13 @@
 import { dirname } from "node:path";
 
-import { isForeign, isList, mapAt, textAt } from "../.github/actions/_lib/foreign.ts";
+import {
+  type Foreign,
+  isForeign,
+  isList,
+  kindOf,
+  mapAt,
+  textAt,
+} from "../.github/actions/_lib/foreign.ts";
 
 /**
  * The wrapper as both suites here read it. Two of them ask about the same file
@@ -11,6 +18,20 @@ import { isForeign, isList, mapAt, textAt } from "../.github/actions/_lib/foreig
 export const root = dirname(import.meta.dir);
 
 export const WRAPPER = ".github/workflows/check.yml";
+
+/**
+ * The wrapper, parsed and narrowed here rather than by each reader. A workflow
+ * is a mapping at its top level; anything else is a file that has stopped being
+ * one, which is worth saying once at the read instead of coming out as an empty
+ * answer to every question below it.
+ */
+export async function wrapperDocument(): Promise<Foreign> {
+  const document: unknown = Bun.YAML.parse(await Bun.file(`${root}/${WRAPPER}`).text());
+  if (!isForeign(document)) {
+    throw new Error(`${WRAPPER} did not parse as a workflow — it is ${kindOf(document)}`);
+  }
+  return document;
+}
 
 /**
  * The image the workflow hands the replay gate, wherever in it that step sits.
@@ -32,7 +53,7 @@ function imagePassedIn(document: unknown): string | undefined {
 
 /** The image the gate is given, refused rather than defaulted: a suite cannot invent the server it grades against. */
 export async function dbImage(): Promise<string> {
-  const found = imagePassedIn(Bun.YAML.parse(await Bun.file(`${root}/${WRAPPER}`).text()));
+  const found = imagePassedIn(await wrapperDocument());
   if (found === undefined) {
     throw new Error(
       `no db-image is passed to the db-replay action in ${WRAPPER} — the suite drives the gate against the image the shipped job runs, and cannot find it`,

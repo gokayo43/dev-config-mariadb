@@ -138,9 +138,12 @@ test("a second replay that changes the schema is refused, naming the lines that 
   expect(verdict.problems[0]).toContain("must not depend on how many times it was migrated");
   expect(verdict.note).toBeUndefined();
   // Never a refusal with nothing to show for itself: the log carries the line
-  // the second replay added, addressed to the schema that has it.
-  expect(verdict.log).toContain("only in the schema after a second replay");
+  // the second replay added, under the schema that has it.
+  expect(verdict.log).toContain("the schema after a second replay, from line ");
   expect(verdict.log).toContain("CONSTRAINT_2");
+  // The line number reaches the annotation too, so a reader who sees only the
+  // step's error knows where in the artifact's dumps to look.
+  expect(verdict.problems[0]).toContain("first differ at line ");
   // Both dumps are on disk, because each is written as it is taken rather
   // than after a comparison that may never happen.
   expect(await Bun.file(evidence.fromEmpty).exists()).toBe(true);
