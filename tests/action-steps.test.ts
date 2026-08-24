@@ -6,7 +6,9 @@ import { join, resolve } from "node:path";
 
 import { type Foreign, isForeign, isList, mapAt, textAt } from "../.github/actions/_lib/foreign.ts";
 
+import { lineage, migratesFrom } from "./lineage.ts";
 import { emptyDatabase, query } from "./mariadb.ts";
+import { materialise } from "./tree.ts";
 import { root } from "./workflow.ts";
 
 /**
@@ -165,10 +167,14 @@ afterAll(async () => {
   for (const where of made.splice(0)) await rm(where, { recursive: true, force: true });
 });
 
-/** A directory holding a `bun` that grades nothing and reports success, which is what a hijacked PATH buys. */
-async function decoyBun(): Promise<string> {
-  const where = await checkout({ bun: "#!/bin/sh\nexit 0\n" });
-  await Bun.spawn(["chmod", "+x", `${where}/bun`]).exited;
+/**
+ * A directory holding a program of that name which does nothing and reports
+ * success, which is the whole of what a hijacked PATH buys: every case below
+ * that uses one is asking whether the step reached the real program instead.
+ */
+async function decoy(name: string): Promise<string> {
+  const where = await checkout({ [name]: "#!/bin/sh\nexit 0\n" });
+  await Bun.spawn(["chmod", "+x", `${where}/${name}`]).exited;
   return where;
 }
 
@@ -236,13 +242,13 @@ test("a preload in the graded checkout cannot silence the DATETIME gate", async 
  * difference.
  */
 test("a DATABASE_URL exported by the graded repo cannot redirect the DATETIME gate", async () => {
-  const decoy = await emptyDatabase();
-  await query(decoy, "create table `harmless` (`id` int primary key)");
+  const elsewhere = await emptyDatabase();
+  await query(elsewhere, "create table `harmless` (`id` int primary key)");
 
   const ran = await ranStep("db-datetime", {
     inputs: { "datetime-allowlist": "", "database-url": await ungraded(), bun: BUN },
     workspace: await checkout(),
-    inherited: { DATABASE_URL: decoy },
+    inherited: { DATABASE_URL: elsewhere },
   });
 
   expect(ran.output).toContain(REFUSES);
@@ -259,7 +265,7 @@ test("a bun the graded repo put on PATH cannot replace the DATETIME gate's inter
   const ran = await ranStep("db-datetime", {
     inputs: { "datetime-allowlist": "", "database-url": await ungraded(), bun: BUN },
     workspace: await checkout(),
-    path: await decoyBun(),
+    path: await decoy("bun"),
   });
 
   expect(ran.output).toContain(REFUSES);
@@ -293,12 +299,25 @@ test("the DATETIME gate refuses to run without the interpreter its caller pins",
  */
 const NO_MIGRATOR = "declares no db:migrate script";
 
+/**
+ * Drizzle's own MySQL migrator, which is what the replay suite drives wherever
+ * a case needs the second replay to be the no-op a journal makes it.
+ */
+const JOURNALLED = join(import.meta.dir, "journalled-migrator.ts");
+
+const CREATES_THING = {
+  tag: "0000_thing",
+  when: 1_000,
+  sql: "CREATE TABLE `thing` (\n\t`id` int NOT NULL,\n\tCONSTRAINT `thing_id` PRIMARY KEY(`id`)\n);\n",
+};
+
 const replayInputs = {
   "working-directory": ".",
   "db-image": "mariadb:11.4",
   "db-gate-evidence": "",
   "database-url": "mysql://root:mariadb@127.0.0.1:3306/app",
   bun: BUN,
+  path: process.env["PATH"] ?? "",
 };
 
 test("the replay gate reaches its verdict in a checkout it was not run from", async () => {
@@ -325,9 +344,40 @@ test("a bun the graded repo put on PATH cannot replace the replay gate's interpr
   const ran = await ranStep("db-replay", {
     inputs: replayInputs,
     workspace: await checkout(),
-    path: await decoyBun(),
+    path: await decoy("bun"),
   });
 
   expect(ran.output).toContain(NO_MIGRATOR);
   expect(ran.status).toBe(1);
 });
+
+/**
+ * The same move one layer down, and the layer the interpreter pin does not
+ * reach: this gate takes its two schema dumps by running `docker`, resolved by
+ * name, and the image digest pins which image runs rather than which program is
+ * asked to run it. A `docker` early on PATH that exits 0 with nothing on stdout
+ * hands the gate two empty dumps — which are identical, which is the whole of
+ * what this gate asserts. Green, over a schema it never read.
+ *
+ * So the assertion is on the evidence rather than on the exit code: an honest
+ * project passes either way, and the two are told apart by whether the dump the
+ * step left behind holds the table the migrations built.
+ */
+test("a docker the graded repo put on PATH cannot take the replay gate's dumps", async () => {
+  const project = await materialise({
+    ...migratesFrom(JOURNALLED, "drizzle"),
+    ...lineage("drizzle", CREATES_THING),
+  });
+
+  const ran = await ranStep("db-replay", {
+    inputs: { ...replayInputs, "database-url": await emptyDatabase() },
+    workspace: project,
+    path: await decoy("docker"),
+  });
+
+  expect(ran.output).toContain("::notice::replay:");
+  expect(ran.status).toBe(0);
+  expect(await Bun.file(`${project}/replay-from-empty.schema`).text()).toContain(
+    "CREATE TABLE `thing`",
+  );
+}, 120_000);

@@ -48,11 +48,12 @@ that has been improved says so at the line that improved it.
   after it — that gate grades the catalogue the migrations built, so it runs
   where that schema is. Both gate steps are handed the database and the
   interpreter by a step that reads them at the top of that job, before a line of
-  the graded repo's own code has run; a gate added beside them takes the same
-  two, and the comment there says why. The remaining MariaDB database jobs land
-  beside them (`#3`, `#4`, `#6`), each with the composite action that runs it,
-  its own suite, and its page under `docs/gates/` — the shape dev-config's
-  "Adding a gate" describes.
+  the graded repo's own code has run — and the replay step the search path too,
+  since it is the one that resolves a program (`docker`) by name. A gate added
+  beside them takes the same, and the comment there says why. The remaining
+  MariaDB database jobs land beside them (`#3`, `#4`, `#6`), each with the
+  composite action that runs it, its own suite, and its page under `docs/gates/`
+  — the shape dev-config's "Adding a gate" describes.
 - `.github/workflows/ci.yml` — this repo's own gate, which is dev-config's
   `check.yml` called directly. It cannot be the wrapper: a commit cannot pin its
   own SHA, so the wrapper's pin is always one commit behind whatever is under

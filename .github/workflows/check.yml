@@ -189,17 +189,19 @@ jobs:
 
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
 
-      # Both facts every gate step below is handed, read here and nowhere else,
+      # What the gate steps below are handed, read here and nowhere else,
       # because here is the last moment in this job at which no line of the
       # graded repo's own code has run yet — not its install scripts, not its
-      # build, not its migrator.
+      # build, not its migrator. A step takes the ones it needs: the search path
+      # goes to the step that resolves a program by name.
       #
       # A step writes $GITHUB_ENV and $GITHUB_PATH and the runner folds both
       # into the environment of every LATER step; a step output cannot be
       # rewritten once set. So a migrator that exports DATABASE_URL would
       # otherwise choose which database the gates grade, and one that prepends a
-      # directory holding its own `bun` would replace the interpreter the gates
-      # run under — the gate's own code never executing, the step green. Neither
+      # directory of its own would decide what `bun` and `docker` mean — the
+      # gate's own code never executing, or its dumps taken by something that
+      # was never the server, and the step green either way. None of the three
       # reaches a value captured before it ran. This is the same bar
       # `_lib/annotations.ts` sets against `::stop-commands::` and
       # `db-replay/database.ts` sets against a migrator's stdout: what the gate
@@ -209,6 +211,7 @@ jobs:
           {
             echo "database-url=$DATABASE_URL"
             echo "bun=$(command -v bun)"
+            echo "path=$PATH"
           } >> "$GITHUB_OUTPUT"
 
       - run: bun install --frozen-lockfile
@@ -238,6 +241,7 @@ jobs:
           db-gate-evidence: ${{ inputs['db-gate-evidence'] }}
           database-url: ${{ steps.pinned.outputs['database-url'] }}
           bun: ${{ steps.pinned.outputs.bun }}
+          path: ${{ steps.pinned.outputs.path }}
 
       # After the replay and never before it: this gate grades the catalogue the
       # migrations produced, so it needs the schema that step builds rather than

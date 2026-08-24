@@ -45,6 +45,14 @@ inputs:
       reading. A bare `bun` is resolved through a PATH the graded repo's own
       steps can prepend to, which replaces this gate with a program that exits 0.
     required: true
+  path:
+    description: >-
+      The search path the gate's own tools are found on, from the same reading —
+      `docker`, which runs the pinned image the dump's client comes from, and
+      the `bun` the project's own migrator is started with. A dump is only the
+      server's own rendering while the program that took it is the one this job
+      started.
+    required: true
 
 runs:
   using: composite
@@ -63,6 +71,11 @@ runs:
         INPUT_FROM_EMPTY: ${{ runner.temp }}/replay-from-empty.schema
         INPUT_REPLAYED: ${{ runner.temp }}/replay-again.schema
         INPUT_BUN: ${{ inputs.bun }}
+        # The dump below is `docker`, resolved by name, and the image it runs is
+        # where `mariadb-dump` comes from: pinning the path is what keeps "the
+        # schema is the server's own rendering" true, since a forged docker
+        # prints whatever it likes and two of its dumps agree with each other.
+        PATH: ${{ inputs.path }}
         # `github.workspace` is an expression context rather than a variable, so
         # nothing a step writes reaches it — which is what makes this an
         # explicit path and not the same inheritance the cwd above just gave up.

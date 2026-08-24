@@ -206,6 +206,11 @@ export async function migrate(root: string, url: string, failed: string): Promis
  * ships a MariaDB client, and an apt install would be an unpinned package
  * inside a gate whose whole point is that what it runs is pinned.
  *
+ * `docker` itself is the one name here still resolved through a search path,
+ * which is why action.yml declares that path from the calling job's own reading
+ * rather than letting the step inherit it: a digest pins which image runs, and
+ * nothing in it pins which program is asked to run that image.
+ *
  * `--network host` because the server is a service container of the calling
  * job, published on the runner's loopback: the dump's container has to be in
  * the namespace those ports are in.
