@@ -149,7 +149,15 @@ bun test        # needs Docker: the replay gate's suite drives a real MariaDB
 ```
 
 The suite starts one MariaDB container per worktree and takes it down again, so
-`bun test` needs a Docker daemon it can reach. It is not sealed the way every
+`bun test` needs a Docker daemon it can reach. It also starts a real app on a
+real port, which is what the boot, probe and ramp gates are graded against.
+
+`ci.yml` carries one job of its own beside that call: the k6 ramp shipped with
+the serving gate, executed under the k6 that gate pins. Nothing in `bun test`
+may fetch a binary, and "it runs inside k6" is not a reason for nothing to have
+run the file.
+
+It is not sealed the way every
 other repo's suite is: dev-config's test-suite gate runs `bun test` in a network
 namespace holding nothing but its own loopback, and a container's published port
 is on the runner's. `test-network` in `ci.yml` is the reason for that, written
