@@ -279,7 +279,7 @@ jobs:
       # because GitHub gives a service image no way to read a value declared
       # anywhere else. tests/wrapper-inputs.test.ts is what holds the two to one
       # digest.
-      - uses: gokayo43/dev-config-mariadb/.github/actions/db-replay@aca414fda1b2fad4d1ff7166f19b93fa5348ee9c
+      - uses: gokayo43/dev-config-mariadb/.github/actions/db-replay@ab4ee826c44466ce9f66525ee5e3602da145dfec
         with:
           # renovate: datasource=docker depName=mariadb
           db-image: mariadb:11.4@sha256:4f1d8d202fcf7bcb3902f63af09f9c1a050c2922a89652f22abaec0d4f015e83
@@ -290,7 +290,7 @@ jobs:
       # under load. A step of this job rather than a job of its own, for the
       # reason CONTEXT.md gives at "A database job". docs/gates/db-serving.md is
       # the page.
-      - uses: gokayo43/dev-config-mariadb/.github/actions/db-serving@aca414fda1b2fad4d1ff7166f19b93fa5348ee9c
+      - uses: gokayo43/dev-config-mariadb/.github/actions/db-serving@ab4ee826c44466ce9f66525ee5e3602da145dfec
         with:
           start-command: ${{ inputs['start-command'] }}
           health-url: ${{ inputs['health-url'] }}
