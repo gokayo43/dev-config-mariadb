@@ -20,12 +20,8 @@ inputs:
       be a second place the caller's choice of server is written down.
     required: true
 
-# The two dumps this step writes are uploaded by the job rather than by this
-# action. One job builds one database, replays onto it and then runs an app
-# against it, so one upload carries the whole of what happened to it — an
-# artifact name may be claimed once per run, and two actions each publishing
-# under the caller's one name would be the second of them failing on the
-# duplicate. check.yml's own upload step is where that name is read.
+# The two dumps this step writes are uploaded by the JOB rather than by this
+# action; check.yml's upload step carries the argument and reads the name.
 runs:
   using: composite
   steps:

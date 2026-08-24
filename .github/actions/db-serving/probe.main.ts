@@ -1,5 +1,5 @@
 import { entry, inputs, publish } from "../_lib/annotations.ts";
-import { probeGate, secondsFrom } from "./probe.ts";
+import { probeGate } from "./probe.ts";
 
 await entry(async () => {
   const read = inputs("probe-command", "probe-timeout", "health-url");
@@ -15,9 +15,9 @@ await entry(async () => {
       // wrong about which app the probe was talking to — and the boot step has
       // already refused a value that is not one.
       url: read["health-url"],
-      // Read before the command is looked at, so that a bound nobody can parse
-      // is refused whether or not there is a probe to run under it.
-      seconds: secondsFrom(read["probe-timeout"]),
+      // Unparsed: the gate reads the bound out of it, and needs to be able to
+      // tell "no bound named" from the number that stands in for one.
+      timeout: read["probe-timeout"],
     }),
   );
 });

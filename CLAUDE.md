@@ -55,10 +55,11 @@ that has been improved says so at the line that improved it.
 - `.github/workflows/check.yml` — the wrapper consumers call. Three jobs: the
   call into dev-config's `check.yml` with `database: false`, the always-running
   `refusals` job that fails a call asking for a database-job input without the
-  job, and `replay` (`#2`). The remaining MariaDB database jobs land beside them
-  (`#3`–`#6`), each with the composite action that runs it, its own suite, and
-  its page under `docs/gates/` — the shape dev-config's "Adding a gate"
-  describes.
+  job, and `database`, which is every MariaDB gate this repo has — one job, and
+  CONTEXT.md's entry for the term says why there will stay one. `#2` and `#3`
+  are shipped; `#4`–`#6` land as further steps of it, each with the composite
+  action that runs it, its own suite, and its page under `docs/gates/` — the
+  shape dev-config's "Adding a gate" describes.
 - `.github/workflows/ci.yml` — this repo's own gate, which is dev-config's
   `check.yml` called directly. It cannot be the wrapper: a commit cannot pin its
   own SHA, so the wrapper's pin is always one commit behind whatever is under
@@ -73,12 +74,10 @@ that has been improved says so at the line that improved it.
   `annotations.ts` (the log protocol and the run summary), `foreign.ts` (the one
   place a document nobody here wrote is narrowed) and `allowlist.ts` (the one
   place an escape hatch is made to carry its reason).
-- The evidence artifact belongs to the **job**, not to either action: one job
-  builds one database and runs one app against it, and an artifact name may be
-  claimed once per run. `check.yml`'s own upload step is where
-  `db-gate-evidence` is read, and a new gate that leaves a file behind adds it
-  to that step's `path` — `tests/serving-job.test.ts` fails when one is written
-  into the runner and left out.
+- The evidence artifact belongs to the **job**, not to either action — the
+  upload step in `check.yml` says why, and is where `db-gate-evidence` is read.
+  What that costs a new gate: a file it leaves in the runner goes on that step's
+  `path`, and `tests/serving-job.test.ts` fails when one does not.
 - `tests/` — what CI cannot see from outside. `wrapper-inputs.test.ts` grades
   the wrapper and the README against the dev-config in `node_modules`, which is
   the commit the workflows call: every input the wrapper hands on reaches the
@@ -99,9 +98,9 @@ that has been improved says so at the line that improved it.
   removes itself, and a real app process on a real port — which is why `ci.yml`
   sets `test-network`.
 
-  Two things the suite cannot run, both in `ci.yml` as steps of their own:
-  nothing in `bun test` may fetch a binary, so the shipped k6 ramp is executed
-  by `tests/ramp-script.ts` under the pinned k6 that `k6.sh` fetches. "It runs
+  The one thing the suite cannot run has a job of its own in `ci.yml`: nothing
+  in `bun test` may fetch a binary, so the shipped k6 ramp is executed by
+  `tests/ramp-script.ts` under the pinned k6 that `k6.sh` fetches. "It runs
   inside k6" is why the linter and knip skip that script, and it is not a reason
   for nothing to have run it.
 

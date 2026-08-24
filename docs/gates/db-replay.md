@@ -1,9 +1,11 @@
 # The replay gate
 
-`database: true` adds the `replay` job: an empty MariaDB — plus a Redis, for the
-repos whose migrator imports an environment module that wants one — the
-consumer's own `bun run db:migrate` onto it, then the same command again, and
-the two schemas compared.
+`database: true` adds the `database` job, and these are its first steps: an
+empty MariaDB — plus a Redis, for the repos whose migrator imports an
+environment module that wants one — the consumer's own `bun run db:migrate` onto
+it, then the same command again, and the two schemas compared. What the same job
+does afterwards, with the database these steps built, is
+[db-serving.md](db-serving.md).
 
 An empty database is the one state no developer machine is ever in, and it is
 the state every deploy to a new box and every restore drill starts from. A
@@ -138,11 +140,8 @@ passes, and the pass reads exactly like a history that rebuilds.
 
 Both schemas leave the run in the artifact `db-gate-evidence` names, defaulting
 to `db-gate-evidence`, alongside everything the steps after this one left behind
-— [db-serving.md](db-serving.md) lists those. The upload is a step of the job
-rather than of this action: one job builds one database and runs one app against
-it, an artifact name may be claimed once per run, and two actions publishing
-under the caller's one name would be the second of them failing on the
-duplicate.
+— [db-serving.md](db-serving.md) lists those and says why one job leaves one
+artifact.
 
 Each schema is written as it is taken rather than after a comparison that may
 never happen — the dump a run never got to compare is exactly the evidence

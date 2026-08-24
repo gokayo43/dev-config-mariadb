@@ -21,9 +21,9 @@ because the run that failed on the way to a number is exactly the run whose
 partial evidence somebody wants.
 
 They run as steps of the same job the replay runs in, rather than as a job of
-their own. The migrated database is that job's service container; a second job
-would get an empty one, and an app booted against that would be answering
-questions about a database no migration had touched.
+their own, because the migrated database is that job's service container — the
+`database` job is the only one there is, and CONTEXT.md's entry for the term
+says why.
 
 ## Boot
 
@@ -148,11 +148,23 @@ than declared as a threshold in the shipped script, because `capacity-script`
 replaces that file entirely and a rule a caller can drop by accident is not a
 rule.
 
-So the step fails when: k6 died; more than a tenth of its requests failed; it
-ran and made no requests, so there is no number to record; the summary it wrote
-is not the shape this reads; or a route the app serves was never exercised.
-Latency, throughput and a failure rate under a tenth are published for a human
-to read, as a table on the run summary.
+So the step fails when: k6 died; it exited cleanly and exported no summary at
+all; more than a tenth of its requests failed; it ran and made no requests, so
+there is no number to record; the summary it wrote is not the shape this reads;
+or a route the app serves was never exercised. Latency, throughput and a failure
+rate under a tenth are published for a human to read, as a table on the run
+summary.
+
+**One step decides all of that, the floor included.** The floor is the
+difference between two reads of the app's counters that this same step takes, so
+it is decidable the moment the second one lands — including on the run the
+failure bound is about to refuse. Behind a step of its own it would sit under
+`success()`, and a ramp that breached the bound would skip it: every route
+nothing reached would then cost a CI round-trip that the measurement had already
+paid for, which is the failure the whole annotate-everything-once contract
+exists to prevent. The one case the floor is skipped is the one where it cannot
+be computed — the second snapshot was never taken, and the step is already
+failing over saying so.
 
 ### The route-coverage floor
 
@@ -232,12 +244,12 @@ Everything these steps leave in the runner is uploaded as the artifact
 | `route-log-before.json` | what the app declared it serves, and what the boot poll had already reached                                          |
 | `route-log-after.json`  | the same, after the ramp — the floor's verdict is the difference between the two                                     |
 
-The upload belongs to the job rather than to either action: one job builds one
-database and runs one app against it, an artifact name may be claimed once per
-run, and two actions publishing under the caller's one name would be the second
-of them failing on the duplicate. It runs whatever the steps before it did, so a
-floor that failed, a ramp that died on the way to a number and an app that never
-answered all leave the same evidence behind.
+The upload belongs to the job rather than to either action — one database, one
+app, one artifact, and a name that may be claimed only once per run;
+`check.yml`'s upload step is where that is argued and where the name is read. It
+runs whatever the steps before it did, so a floor that failed, a ramp that died
+on the way to a number and an app that never answered all leave the same
+evidence behind.
 
 ## What this cannot catch
 

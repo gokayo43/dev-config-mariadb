@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 
 import { type Foreign, isForeign, isList, mapAt, textAt } from "../.github/actions/_lib/foreign.ts";
 
-import { root, WRAPPER, wrapperDocument } from "./workflow.ts";
+import { root, stringsIn, WRAPPER, wrapperDocument } from "./workflow.ts";
 
 /**
  * The wiring the gates themselves cannot see: which steps the shipped job runs,
@@ -16,8 +16,12 @@ import { root, WRAPPER, wrapperDocument } from "./workflow.ts";
  * runs whatever k6 the machine happens to have.
  */
 
-/** Where a step leaves a file for the job to upload afterwards. */
-const IN_RUNNER_TEMP = /\$\{\{\s*runner\.temp\s*\}\}\/([\w.-]+)/u;
+/**
+ * Where a step leaves a file for the job to upload afterwards, in either
+ * spelling a step has for the runner's temp directory: the expression a YAML
+ * value carries, and the variable a `run:` block reads.
+ */
+const IN_RUNNER_TEMP = /(?:\$\{\{\s*runner\.temp\s*\}\}|\$\{?RUNNER_TEMP\}?)\/([\w.-]+)/gu;
 
 async function action(name: string): Promise<Foreign> {
   const parsed: unknown = Bun.YAML.parse(
@@ -34,17 +38,20 @@ function stepsOf(document: Foreign): Foreign[] {
 
 /**
  * Every file under the runner's temp directory the action names, by name and
- * once each: two steps naming one file — the snapshots, written by the ramp and
- * read by the floor — are one file to upload.
+ * once each: two steps naming one file are one file to upload.
+ *
+ * Read off every string in the action rather than off `env:` alone. An `env:`
+ * block is where these paths are written today, and a guard that only knew that
+ * would go quiet the first time a step wrote one into its own `run:` — which is
+ * exactly the claim CLAUDE.md makes for this test.
  */
 function runnerFiles(document: Foreign): string[] {
   return [
     ...new Set(
-      stepsOf(document).flatMap((step) =>
-        Object.values(mapAt(step, "env")).flatMap((value) => {
-          const found = typeof value === "string" ? IN_RUNNER_TEMP.exec(value) : null;
-          return found?.[1] === undefined ? [] : [found[1]];
-        }),
+      stringsIn(document).flatMap((value) =>
+        [...value.matchAll(IN_RUNNER_TEMP)].flatMap((found) =>
+          found[1] === undefined ? [] : [found[1]],
+        ),
       ),
     ),
   ];
@@ -56,8 +63,15 @@ const replay = await action("db-replay");
 
 /** The steps of the one job that builds a database and runs an app against it. */
 function jobSteps(): Foreign[] {
-  const steps = mapAt(mapAt(wrapper, "jobs"), "replay")["steps"];
+  const steps = mapAt(mapAt(wrapper, "jobs"), "database")["steps"];
   return (isList(steps) ? steps : []).filter((step) => isForeign(step));
+}
+
+/** The step that ramps, which is also the step that grades the floor — see below. */
+function rampStep(): Foreign {
+  const found = stepsOf(serving).find((step) => (textAt(step, "name") ?? "").includes("ramp"));
+  if (found === undefined) throw new Error("db-serving has no ramp step");
+  return found;
 }
 
 function stepUsing(what: string): Foreign {
@@ -102,7 +116,7 @@ test("the probe step runs when either of its two inputs is set", () => {
 });
 
 test("the ramp runs the k6 this repo pinned, not whatever the machine has", async () => {
-  const ramp = stepsOf(serving).find((step) => textAt(step, "name") === "Capacity ramp");
+  const ramp = rampStep();
   expect(textAt(ramp, "run")).toContain("k6.sh");
 
   const fetcher = await Bun.file(`${root}/.github/actions/db-serving/k6.sh`).text();
@@ -132,4 +146,18 @@ test("the job hands the serving gate every input it declares, each under its own
     return typeof value !== "string" || !reference.test(value);
   });
   expect(crossed).toEqual([]);
+});
+
+test("the floor is decided by the step that ramps, not by one behind it", () => {
+  // A step of its own runs under `success()`, so a ramp the failure bound
+  // refuses would skip it — and every route nothing reached would cost a CI
+  // round-trip that the measurement had already paid for. One step, one
+  // verdict: the two snapshots and the allowlist reach the same program.
+  const ramp = mapAt(rampStep(), "env");
+  expect(Object.keys(ramp)).toContain("INPUT_ROUTE_ALLOWLIST");
+  expect(Object.keys(ramp)).toContain("INPUT_ROUTE_LOG_BEFORE");
+  expect(Object.keys(ramp)).toContain("INPUT_ROUTE_LOG_AFTER");
+
+  // And nothing after it: the ramp is the last thing the action does.
+  expect(stepsOf(serving).at(-1)).toEqual(rampStep());
 });

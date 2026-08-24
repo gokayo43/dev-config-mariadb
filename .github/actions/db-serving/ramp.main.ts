@@ -1,3 +1,4 @@
+import { allowlistFrom } from "../_lib/allowlist.ts";
 import { entry, inputs, publish, required } from "../_lib/annotations.ts";
 import { rampGate, SHIPPED } from "./ramp.ts";
 
@@ -5,6 +6,7 @@ await entry(async () => {
   const read = inputs(
     "capacity-script",
     "capacity-path",
+    "route-allowlist",
     "health-url",
     "route-log-before",
     "route-log-after",
@@ -22,6 +24,10 @@ await entry(async () => {
       script: read["capacity-script"] === "" ? SHIPPED : read["capacity-script"],
       url: read["health-url"],
       paths: read["capacity-path"],
+      // The floor is this step's too: it is decided by the two snapshots below,
+      // and a route nothing reached is worth naming on the run the failure
+      // bound is refusing rather than one round-trip later.
+      allowlist: allowlistFrom(read["route-allowlist"], "route-allowlist"),
       before: read["route-log-before"],
       after: read["route-log-after"],
       summary: read["summary-file"],

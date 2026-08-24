@@ -130,7 +130,7 @@ as a **matrix** gives each leg its own, and keeps it distinct from
 | ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------- |
 | `refusals`                | the one rule this workflow adds rather than delegates: a call asking for an input aimed at a database job, without that job, is refused rather than ignored                                                                                                                                                                    | shipped                                                                 |
 | `static`                  | dev-config's `check.yml` with `database: false`: the secret scan, the repo contract, the stack denylist, the workflow lint, suppression hygiene, shell scripts, `format:check` / `lint` / `typecheck` / `knip`, the test suite, and — each where the caller asks for it — the compose lint and the mutation lane               | shipped                                                                 |
-| `replay`                  | the repo's `db:migrate` onto an empty MariaDB, twice, compared as normalized schema dumps — [docs/gates/db-replay.md](docs/gates/db-replay.md) — and then, against that database, the app booted, the repo's own probe run, and a k6 ramp with the route-coverage floor — [docs/gates/db-serving.md](docs/gates/db-serving.md) | shipped                                                                 |
+| `database`                | the repo's `db:migrate` onto an empty MariaDB, twice, compared as normalized schema dumps — [docs/gates/db-replay.md](docs/gates/db-replay.md) — and then, against that database, the app booted, the repo's own probe run, and a k6 ramp with the route-coverage floor — [docs/gates/db-serving.md](docs/gates/db-serving.md) | shipped                                                                 |
 | upgrade path and backfill | the base ref's lineage upgraded and compared with a fresh build, and a backfill run twice                                                                                                                                                                                                                                      | planned ([#4](https://github.com/gokayo43/dev-config-mariadb/issues/4)) |
 | DATETIME wall clock       | every `DATETIME` column carries a reasoned allowlist entry, MariaDB's half of the ambiguous-instant class                                                                                                                                                                                                                      | planned ([#5](https://github.com/gokayo43/dev-config-mariadb/issues/5)) |
 | integration lane          | the repo's DB-touching suite against a real MariaDB and Redis, with the junit report read afterwards                                                                                                                                                                                                                           | planned ([#6](https://github.com/gokayo43/dev-config-mariadb/issues/6)) |
@@ -150,18 +150,16 @@ bun test        # needs Docker: the replay gate's suite drives a real MariaDB
 
 The suite starts one MariaDB container per worktree and takes it down again, so
 `bun test` needs a Docker daemon it can reach. It also starts a real app on a
-real port, which is what the boot, probe and ramp gates are graded against.
+real port, which is what the boot, probe and ramp gates are graded against. It
+is not sealed the way every other repo's suite is: dev-config's test-suite gate
+runs `bun test` in a network namespace holding nothing but its own loopback, and
+a container's published port is on the runner's. `test-network` in `ci.yml` is
+the reason for that, written where it is read in review.
 
-`ci.yml` carries one job of its own beside that call: the k6 ramp shipped with
+Beside that call, `ci.yml` carries one job of its own: the k6 ramp shipped with
 the serving gate, executed under the k6 that gate pins. Nothing in `bun test`
 may fetch a binary, and "it runs inside k6" is not a reason for nothing to have
 run the file.
-
-It is not sealed the way every
-other repo's suite is: dev-config's test-suite gate runs `bun test` in a network
-namespace holding nothing but its own loopback, and a container's published port
-is on the runner's. `test-network` in `ci.yml` is the reason for that, written
-where it is read in review.
 
 ## Pins
 

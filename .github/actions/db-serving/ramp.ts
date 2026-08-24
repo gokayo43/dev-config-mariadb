@@ -1,11 +1,22 @@
+import type { Allowlist } from "../_lib/allowlist.ts";
 import { plainly, type Verdict } from "../_lib/annotations.ts";
 
 import { capacity, parseSummary } from "./capacity.ts";
 import { ENDPOINT } from "./route-log.ts";
+import { parseRouteLog, routeCoverage } from "./route-coverage.ts";
 
 /**
  * The ramp: k6 against the app the boot step brought up, with the app's own
- * route counters read either side of it.
+ * route counters read either side of it, and the floor those two reads decide.
+ *
+ * **One verdict, not two.** The measurement and the floor are computed from the
+ * same run and published together, because the floor is decidable the moment
+ * the second snapshot is on disk — including on the run the failure bound is
+ * about to refuse. Split across two steps the floor sat behind `success()`, so
+ * a ramp that breached the bound skipped it, and every route nothing reached
+ * cost a CI round-trip the measurement had already paid for. That is the
+ * failure `publish` in `_lib/annotations.ts` exists to prevent, one level up:
+ * annotate everything this run can say, and fail the step once.
  *
  * This is the half that talks to something — the app, and the pinned k6 binary
  * — and `capacity.ts` is the pure reading of what k6 left behind. The same
@@ -58,6 +69,8 @@ export interface Ramp {
   readonly url: string;
   /** `capacity-path`, handed to the script as it was written. */
   readonly paths: string;
+  /** The routes the floor is told not to expect, each with the reason it says so. */
+  readonly allowlist: Allowlist;
   /** Where the counters as they stood before the ramp are left. */
   readonly before: string;
   /** And after it — the floor is the difference between the two. */
@@ -85,11 +98,17 @@ async function snapshot(from: string, onto: string): Promise<string | undefined>
   }
 }
 
+/** One snapshot as the floor reads it, from the file the fetch above landed. */
+async function routeLogIn(file: string, source: string): Promise<ReturnType<typeof parseRouteLog>> {
+  return parseRouteLog(await Bun.file(file).text(), source);
+}
+
 export async function rampGate({
   k6,
   script,
   url,
   paths,
+  allowlist,
   before,
   after,
   summary,
@@ -130,10 +149,40 @@ export async function rampGate({
   // the step then fails carrying both.
   const gone = await snapshot(routeLog, after);
 
-  const measured = capacity(parseSummary(await Bun.file(summary).text()));
+  // Refused by name rather than met as an ENOENT three frames later. k6 exiting
+  // 0 having exported nothing is reachable through a `capacity-script` of the
+  // repo's own — the same untrusted input whose SHAPE the parse already refuses
+  // — and "the file is not there" is the reading of it that no arithmetic can
+  // survive.
+  const exported = Bun.file(summary);
+  if (!(await exported.exists())) {
+    return {
+      log,
+      problems: [
+        `k6 exited 0 against ${script} and exported no summary to ${summary} — its own output is above. The measurement IS the summary, so there is nothing here to publish and nothing to hold to the failure bound.`,
+      ],
+    };
+  }
+
+  const measured = capacity(parseSummary(await exported.text()));
+  if (gone !== undefined) {
+    return { ...measured, log, problems: [...measured.problems, gone] };
+  }
+
+  // The floor, from the two reads this step took: a route whose count rose is a
+  // route the ramp reached. It is decided here rather than in a step of its own
+  // for the reason the docblock gives — a measurement the bound refuses is
+  // still a run whose routes are worth naming.
+  const floor = routeCoverage(
+    await routeLogIn(before, "the route log read before the ramp"),
+    await routeLogIn(after, "the route log read after the ramp"),
+    allowlist,
+  );
+  const noted = floor.note === undefined ? {} : { note: floor.note };
   return {
     ...measured,
+    ...noted,
     log,
-    problems: [...measured.problems, ...(gone === undefined ? [] : [gone])],
+    problems: [...measured.problems, ...floor.problems],
   };
 }

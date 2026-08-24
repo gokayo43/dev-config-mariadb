@@ -57,8 +57,14 @@ export interface Probe {
   readonly command: string;
   /** The booted app, handed over under the name every other step here uses for it. */
   readonly url: string;
-  /** How long the command gets before it is killed. */
-  readonly seconds: number;
+  /**
+   * `probe-timeout` as the caller spelled it, unparsed. The bound is read from
+   * it here rather than handed in already parsed, so that this gate can tell a
+   * caller who named a bound from one who did not — the refusal below is the
+   * one place that difference is worth a different sentence, and a number is
+   * the one thing that cannot carry it.
+   */
+  readonly timeout: string;
 }
 
 /**
@@ -173,16 +179,31 @@ function after(ms: number): Promise<typeof TOO_LATE> {
   });
 }
 
-export async function probeGate({ root, command, url, seconds }: Probe): Promise<Verdict> {
-  // Half of a pair is a caller who asked for something and would not get it —
-  // the same refusal `backfillGate` makes, and the reason this step runs when
-  // *either* input is set rather than only when the command is. A bound with
-  // no command under it bounds nothing, and being quietly ignored is how an
-  // input somebody wrote turns out never to have been read.
+export async function probeGate({ root, command, url, timeout }: Probe): Promise<Verdict> {
+  // Read before the command is looked at, so that a bound nobody can parse is
+  // refused whether or not there is a probe to run under it.
+  const seconds = secondsFrom(timeout);
+
+  // Half of a pair is a caller who asked for something and would not get it,
+  // which is the reason this step runs when *either* input is set rather than
+  // only when the command is. Being quietly ignored is how an input somebody
+  // wrote turns out never to have been read.
+  //
+  // Which of the two sentences depends on whether a bound was named, and that
+  // is the whole reason this takes the input unparsed: `probe-timeout` unset
+  // reads as the module's default, so a diagnostic written off the number would
+  // tell a caller who wrote a whitespace-only command that their 120s bound
+  // bounds nothing — a bound they never wrote, in an input they never touched.
+  // **dev-config's probe.ts has that bug**, since its `probeGate` is handed the
+  // parsed seconds; this is the delta, and the `appUrlFrom` note above is the
+  // other one.
   if (command.trim() === "") {
+    const empty = command === "" ? "empty" : "only whitespace";
     return {
       problems: [
-        `probe-timeout is set to ${seconds}s and probe-command is empty — the bound is on that command, and there is no probe here for it to bound`,
+        timeout === ""
+          ? `probe-command is ${empty}, so this step ran with no probe in it — a shell handed that asserts nothing about the booted app, and a step that passes for having been given nothing is the failure every gate here is written against. Write the probe, or drop the input.`
+          : `probe-timeout is set to ${seconds}s and probe-command is ${empty} — the bound is on that command, and there is no probe here for it to bound`,
       ],
     };
   }

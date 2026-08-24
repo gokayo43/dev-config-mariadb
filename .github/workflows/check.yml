@@ -130,12 +130,10 @@ jobs:
           CAPACITY_SCRIPT: ${{ inputs['capacity-script'] }}
           CAPACITY_PATH: ${{ inputs['capacity-path'] }}
           ROUTE_ALLOWLIST: ${{ inputs['route-allowlist'] }}
-          # The two inputs above that carry a non-empty default, written out a
-          # second time so the guard below has something to compare against.
-          # tests/refusals.test.ts holds these two to the defaults declared at
-          # the top of this file; a workflow_call input cannot be asked whether
-          # the caller passed it, and `github.event.inputs` is not populated for
-          # one, so "the caller wrote this" has no other spelling here.
+          # The two defaults above, written out a second time because a step
+          # cannot read an input's declared default. tests/refusals.test.ts
+          # holds the two statements together; `changed_from_default` below is
+          # why they are compared at all.
           START_COMMAND_DEFAULT: bun run start
           HEALTH_URL_DEFAULT: http://localhost:3000/api/health
         shell: bash
@@ -146,39 +144,52 @@ jobs:
             echo "::error::$1"
             wrong=1
           }
-          if [ "$DATABASE" != true ] && [ -n "$DB_GATE_EVIDENCE" ]; then
-            refuse "db-gate-evidence needs database: true — it names the artifact the database job uploads, and this call leaves that job off"
-          fi
-          if [ "$DATABASE" != true ] && [ -n "$PROBE_COMMAND" ]; then
-            refuse "probe-command needs database: true — the probe runs against the app the database job boots, and this call leaves that job off"
-          fi
-          if [ "$DATABASE" != true ] && [ -n "$PROBE_TIMEOUT" ]; then
-            refuse "probe-timeout needs database: true — it bounds a probe the database job runs, and this call leaves that job off"
-          fi
-          if [ "$DATABASE" != true ] && [ -n "$CAPACITY_SCRIPT" ]; then
-            refuse "capacity-script needs database: true — the ramp runs against the app the database job boots, and this call leaves that job off"
-          fi
-          if [ "$DATABASE" != true ] && [ -n "$CAPACITY_PATH" ]; then
-            refuse "capacity-path needs database: true — the ramp runs against the app the database job boots, and this call leaves that job off"
-          fi
-          if [ "$DATABASE" != true ] && [ -n "$ROUTE_ALLOWLIST" ]; then
-            refuse "route-allowlist needs database: true — the route floor is measured across the database job's ramp, and this call leaves that job off"
-          fi
-          # Compared with their defaults rather than tested for emptiness, which
-          # is the whole of what these two can be asked. Every other input aimed
-          # at the job defaults to "", so non-empty IS "the caller passed it";
-          # these two carry a value, because a consumer moving between this
-          # workflow and dev-config's writes one call either way and the
-          # defaults are theirs. dev-config#66 is the same two inputs going
-          # unrefused there, where the guard tests for emptiness alone. What
-          # this still cannot see is a caller who passes exactly the default —
-          # docs/gates/db-serving.md names that, rather than papering it over.
-          if [ "$DATABASE" != true ] && [ "$START_COMMAND" != "$START_COMMAND_DEFAULT" ]; then
-            refuse "start-command needs database: true — it is how the database job's boot step starts the app, and this call leaves that job off"
-          fi
-          if [ "$DATABASE" != true ] && [ "$HEALTH_URL" != "$HEALTH_URL_DEFAULT" ]; then
-            refuse "health-url needs database: true — it is what the database job's boot step polls and what its ramp measures, and this call leaves that job off"
-          fi
+
+          # The rule has two shapes and this is the first: an input that
+          # defaults to "" was passed iff it is non-empty.
+          #
+          # Both helpers end in `return 0`, and that is not decoration — under
+          # `set -e` a function whose last statement is a test that failed
+          # returns non-zero, and the step would die on a rule that correctly
+          # did not fire.
+          needs_job() {
+            if [ "$DATABASE" != true ] && [ -n "$2" ]; then
+              refuse "$1 needs database: true — $3, and this call leaves that job off"
+            fi
+            return 0
+          }
+
+          # The second shape, for the two inputs that carry a value rather than
+          # an empty default: a workflow_call input cannot be asked whether the
+          # caller passed it, so "passed" is spelled "differs from the default".
+          # That leaves one caller invisible — the one who passes exactly the
+          # default — which docs/gates/db-serving.md names rather than papers
+          # over, and dev-config#66 is the same two inputs going unrefused
+          # there, where the guard has only the first shape.
+          changed_from_default() {
+            if [ "$DATABASE" != true ] && [ "$2" != "$3" ]; then
+              refuse "$1 needs database: true — $4, and this call leaves that job off"
+            fi
+            return 0
+          }
+
+          needs_job db-gate-evidence "$DB_GATE_EVIDENCE" \
+            "it names the artifact the database job uploads"
+          needs_job probe-command "$PROBE_COMMAND" \
+            "the probe runs against the app the database job boots"
+          needs_job probe-timeout "$PROBE_TIMEOUT" \
+            "it bounds a probe the database job runs"
+          needs_job capacity-script "$CAPACITY_SCRIPT" \
+            "the ramp runs against the app the database job boots"
+          needs_job capacity-path "$CAPACITY_PATH" \
+            "the ramp runs against the app the database job boots"
+          needs_job route-allowlist "$ROUTE_ALLOWLIST" \
+            "the route floor is measured across the database job's ramp"
+          changed_from_default start-command "$START_COMMAND" "$START_COMMAND_DEFAULT" \
+            "it is how the database job's boot step starts the app"
+          changed_from_default health-url "$HEALTH_URL" "$HEALTH_URL_DEFAULT" \
+            "it is what the database job's boot step polls and what its ramp measures"
+
           # Asked whatever the job, because it is a fact about the pair rather
           # than about the job: a bound with no command under it bounds nothing,
           # and an input that reaches a step which never reads it is the class
@@ -188,7 +199,7 @@ jobs:
           fi
           exit "$wrong"
 
-  replay:
+  database:
     if: inputs.database
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -276,9 +287,9 @@ jobs:
       # Migrations applying says nothing about whether an app can run against
       # what they built, a route table answering says nothing about whether any
       # answer was right, and neither says anything about what the surface does
-      # under load. Same job as the replay above, because the database this
-      # boots against is that job's service container and a second job would get
-      # an empty one. docs/gates/db-serving.md is the page.
+      # under load. A step of this job rather than a job of its own, for the
+      # reason CONTEXT.md gives at "A database job". docs/gates/db-serving.md is
+      # the page.
       - uses: gokayo43/dev-config-mariadb/.github/actions/db-serving@aca414fda1b2fad4d1ff7166f19b93fa5348ee9c
         with:
           start-command: ${{ inputs['start-command'] }}

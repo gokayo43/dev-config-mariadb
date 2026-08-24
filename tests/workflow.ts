@@ -34,6 +34,22 @@ export async function wrapperDocument(): Promise<Foreign> {
 }
 
 /**
+ * Every string anywhere in a document, which is where a path, an expression or
+ * a command can be written.
+ *
+ * Here rather than in the suite that wants it, because reading a workflow is
+ * what this module is for and the walk needs the `unknown` this file is already
+ * the boundary for. (`wrapper-inputs.test.ts` carries its own copy; collapsing
+ * the two is a one-line change once that file is not being edited in parallel.)
+ */
+export function stringsIn(document: unknown): string[] {
+  if (typeof document === "string") return [document];
+  if (isList(document)) return document.flatMap((node) => stringsIn(node));
+  if (!isForeign(document)) return [];
+  return Object.values(document).flatMap((node: unknown) => stringsIn(node));
+}
+
+/**
  * The image the workflow hands the replay gate, wherever in it that step sits.
  * Walked rather than addressed by job and step index, so that moving the step
  * does not move this: what is wanted is "the image the shipped gate is given",

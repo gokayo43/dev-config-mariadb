@@ -2,7 +2,6 @@ import { expect, test } from "bun:test";
 import { join } from "node:path";
 
 import { allowlistFrom } from "../.github/actions/_lib/allowlist.ts";
-import { parseRouteLog, routeCoverage } from "../.github/actions/db-serving/route-coverage.ts";
 import { rampGate, SHIPPED } from "../.github/actions/db-serving/ramp.ts";
 
 import { type Mode, serving } from "./app.ts";
@@ -39,7 +38,12 @@ interface Ramped {
   readonly url: string;
 }
 
-async function ramp(plan: Plan, mode: Mode = "serving", paths = "/api/things"): Promise<Ramped> {
+async function ramp(
+  plan: Plan,
+  mode: Mode = "serving",
+  paths = "/api/things",
+  allowlist = "",
+): Promise<Ramped> {
   const root = await materialise({});
   const app = await serving(root, mode);
   const script = join(root, "plan.json");
@@ -49,23 +53,20 @@ async function ramp(plan: Plan, mode: Mode = "serving", paths = "/api/things"): 
     after: join(root, "route-log-after.json"),
     summary: join(root, "capacity.json"),
   };
-  const verdict = await rampGate({ k6: K6, script, url: app.url, paths, ...where });
+  const verdict = await rampGate({
+    k6: K6,
+    script,
+    url: app.url,
+    paths,
+    allowlist: allowlistFrom(allowlist, "route-allowlist"),
+    ...where,
+  });
   return { verdict, url: app.url, ...where };
-}
-
-/** The floor's own verdict over what the ramp left behind, which is what the step after it does. */
-async function coverage(ran: Ramped, allowlist = ""): Promise<ReturnType<typeof routeCoverage>> {
-  return routeCoverage(
-    parseRouteLog(await Bun.file(ran.before).text(), "before"),
-    parseRouteLog(await Bun.file(ran.after).text(), "after"),
-    allowlistFrom(allowlist, "route-allowlist"),
-  );
 }
 
 test("the ramp measures the app, and the floor is the difference between two reads of its counters", async () => {
   const ran = await ramp({ summary: CAPTURED });
 
-  expect(ran.verdict.problems).toEqual([]);
   expect(ran.verdict.table).toContain("| Requests | 137994 |");
 
   // The app answered the health poll before the first snapshot was taken — that
@@ -74,13 +75,16 @@ test("the ramp measures the app, and the floor is the difference between two rea
   const before: unknown = await Bun.file(ran.before).json();
   expect(JSON.stringify(before)).toContain("/health");
 
-  const floor = await coverage(ran);
   // Ramped: the health route and the one capacity-path. Not ramped: the two
   // routes nothing was aimed at.
-  expect(floor.problems).toHaveLength(2);
-  expect(floor.problems.join("\n")).toContain("POST /api/things is served but no ramp request");
-  expect(floor.problems.join("\n")).toContain("ALL /api/events is served but no ramp request");
-  expect(floor.note).toContain("2 of 4 routes exercised by the ramp");
+  expect(ran.verdict.problems).toHaveLength(2);
+  expect(ran.verdict.problems.join("\n")).toContain(
+    "POST /api/things is served but no ramp request",
+  );
+  expect(ran.verdict.problems.join("\n")).toContain(
+    "ALL /api/events is served but no ramp request",
+  );
+  expect(ran.verdict.note).toContain("2 of 4 routes exercised by the ramp");
 }, 30_000);
 
 test("a ramp that reaches every route leaves the floor with nothing to refuse", async () => {
@@ -94,9 +98,8 @@ test("a ramp that reaches every route leaves the floor with nothing to refuse", 
     ],
   });
 
-  const floor = await coverage(ran);
-  expect(floor.problems).toEqual([]);
-  expect(floor.note).toContain("4 of 4 routes exercised by the ramp");
+  expect(ran.verdict.problems).toEqual([]);
+  expect(ran.verdict.note).toContain("4 of 4 routes exercised by the ramp");
 }, 30_000);
 
 test("an app with no route-log endpoint fails before k6 is run at all", async () => {
@@ -134,6 +137,7 @@ test("an app that dies under the ramp fails carrying both what it measured and w
     script,
     url: app.url,
     paths: "",
+    allowlist: allowlistFrom("", "route-allowlist"),
     before: join(root, "before.json"),
     after: join(root, "after.json"),
     summary: join(root, "capacity.json"),
@@ -150,3 +154,41 @@ test("an app that dies under the ramp fails carrying both what it measured and w
 test("the ramp a caller who names no script gets is the one shipped beside the action", async () => {
   expect(await Bun.file(SHIPPED).exists()).toBe(true);
 });
+
+test("a ramp the failure bound refuses still carries what the floor found", async () => {
+  // The two verdicts are one step because the floor is computable whenever the
+  // second snapshot was taken, and an app that answered badly under load is
+  // exactly when a reader also wants to know which routes nothing reached. Two
+  // steps put the floor behind `success()`, so every route problem cost a CI
+  // round-trip that the measurement had already earned.
+  const ran = await ramp({ summary: REFUSED });
+
+  expect(ran.verdict.table).toContain("| Failed requests | 50.00% |");
+  const said = ran.verdict.problems.join("\n");
+  expect(said).toContain("of the ramp's requests failed");
+  expect(said).toContain("POST /api/things is served but no ramp request exercises it");
+  expect(said).toContain("ALL /api/events is served but no ramp request exercises it");
+  expect(ran.verdict.note).toContain("2 of 4 routes exercised by the ramp");
+}, 30_000);
+
+test("a k6 that exits 0 having exported nothing is refused by name, not by an ENOENT", async () => {
+  // Reachable through a `capacity-script` of the repo's own, which is the same
+  // untrusted input whose shape the summary parse already refuses.
+  const ran = await ramp({});
+
+  expect(ran.verdict.problems).toHaveLength(1);
+  expect(ran.verdict.problems[0]).toContain("exported no summary");
+  expect(ran.verdict.problems[0]).toContain("The measurement IS the summary");
+});
+
+test("the allowlist the caller wrote reaches the floor the ramp decides", async () => {
+  const ran = await ramp(
+    { summary: CAPTURED },
+    "serving",
+    "/api/things",
+    "POST /api/things -- written by the importer, and no ramp of ours may write rows\nALL /api/events -- the sse stream never completes a request under a ramp",
+  );
+
+  expect(ran.verdict.problems).toEqual([]);
+  expect(ran.verdict.note).toContain("2 allowlisted");
+}, 30_000);

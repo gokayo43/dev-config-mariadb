@@ -25,8 +25,8 @@ import { materialise } from "./tree.ts";
 
 const APP = "http://127.0.0.1:65535/health";
 
-async function probe(command: string, seconds = 30): Promise<ReturnType<typeof probeGate>> {
-  return probeGate({ root: await materialise({}), command, url: APP, seconds });
+async function probe(command: string, timeout = "30"): Promise<ReturnType<typeof probeGate>> {
+  return probeGate({ root: await materialise({}), command, url: APP, timeout });
 }
 
 test("every line on stdout is a problem, whatever the command exits", async () => {
@@ -65,10 +65,24 @@ test("the app reaches the command under the one name every step here uses", asyn
 });
 
 test("a bound with no command under it is refused rather than ignored", async () => {
-  const verdict = await probe("   ", 45);
+  const verdict = await probe("   ", "45");
 
   expect(verdict.problems).toHaveLength(1);
-  expect(verdict.problems[0]).toContain("probe-timeout is set to 45s and probe-command is empty");
+  expect(verdict.problems[0]).toContain(
+    "probe-timeout is set to 45s and probe-command is only whitespace",
+  );
+});
+
+test("a probe that is only whitespace is refused without inventing a bound nobody wrote", async () => {
+  // `probe-command: |` with a blank body selects this step, and the bound is
+  // unset — so a diagnostic written off the parsed number would send its reader
+  // to a 120s default they never chose, in an input they never touched.
+  const verdict = await probe("  \n  ", "");
+
+  expect(verdict.problems).toHaveLength(1);
+  expect(verdict.problems[0]).toContain("probe-command is only whitespace");
+  expect(verdict.problems[0]).not.toContain("probe-timeout");
+  expect(verdict.problems[0]).not.toContain("120");
 });
 
 test("the bound takes everything the probe started, not only the shell", async () => {
@@ -84,7 +98,7 @@ test("the bound takes everything the probe started, not only the shell", async (
     root,
     command: `sleep 60 & echo $! > ${child}; wait`,
     url: APP,
-    seconds: 1,
+    timeout: "1",
   });
   const took = Date.now() - started;
 

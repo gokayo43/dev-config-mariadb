@@ -58,12 +58,9 @@ inputs:
       part of the entry, the price a lint directive pays.
     default: ""
 
-# The evidence these steps leave in the runner is uploaded by the job rather
-# than by this action, which is where the replay's two schema dumps are uploaded
-# from as well. One job builds one database and runs one app against it, so one
-# upload carries the whole of what happened to it — an artifact name may be
-# claimed once per run, and two actions each publishing under the caller's one
-# name would be the second of them failing on the duplicate.
+# The evidence these steps leave in the runner is uploaded by the JOB rather
+# than by this action; check.yml's upload step carries the argument and reads
+# the name.
 runs:
   using: composite
   steps:
@@ -114,19 +111,26 @@ runs:
 
     # A number, not a latency threshold. On a shared runner a latency bound
     # measures the runner, and a gate that fails on that is one people turn off.
-    # The step fails when k6 died, when it breached the one bound that is not
-    # the runner's — the share of requests the app refused — and when it
-    # produced no measurement to record.
+    # The step fails when k6 died, when it exported no summary, when it breached
+    # the one bound that is not the runner's — the share of requests the app
+    # refused — when it produced no measurement to record, and when a route the
+    # app serves took nothing from it.
+    #
+    # The floor is this step rather than the next one, and that is the whole
+    # reason there is no next one: it is decided by the two counter snapshots
+    # this step takes, so a ramp the failure bound refuses would otherwise skip
+    # it under `success()` and cost a round-trip per route nothing reached.
     #
     # k6.sh is sourced rather than run: it leaves the verified binary at $K6,
     # which is the one thing this step cannot fetch for itself from inside Bun.
-    - name: Capacity ramp
+    - name: Capacity ramp, and every route it reaches
       shell: bash
       working-directory: ${{ inputs.working-directory }}
       env:
         INPUT_HEALTH_URL: ${{ inputs['health-url'] }}
         INPUT_CAPACITY_PATH: ${{ inputs['capacity-path'] }}
         INPUT_CAPACITY_SCRIPT: ${{ inputs['capacity-script'] }}
+        INPUT_ROUTE_ALLOWLIST: ${{ inputs['route-allowlist'] }}
         INPUT_ROUTE_LOG_BEFORE: ${{ runner.temp }}/route-log-before.json
         INPUT_ROUTE_LOG_AFTER: ${{ runner.temp }}/route-log-after.json
         INPUT_SUMMARY_FILE: ${{ runner.temp }}/capacity.json
@@ -135,16 +139,3 @@ runs:
         # shellcheck source=/dev/null
         . "$GITHUB_ACTION_PATH/k6.sh"
         bun "$GITHUB_ACTION_PATH/ramp.main.ts"
-
-    # The floor, not a realism claim: a route no request reached has never been
-    # under load at all, which is the same thing the coverage threshold catches
-    # about a module no test imports.
-    - name: Every route the ramp reaches
-      shell: bash
-      env:
-        INPUT_ROUTE_LOG_BEFORE: ${{ runner.temp }}/route-log-before.json
-        INPUT_ROUTE_LOG_AFTER: ${{ runner.temp }}/route-log-after.json
-        INPUT_ROUTE_ALLOWLIST: ${{ inputs['route-allowlist'] }}
-      run: |
-        set -euo pipefail
-        bun "$GITHUB_ACTION_PATH/route-coverage.main.ts"
