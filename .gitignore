@@ -1,1 +1,4 @@
 node_modules/
+
+# Agent worktrees live here; they are checkouts, not content.
+.claude/
