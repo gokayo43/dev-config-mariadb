@@ -8,7 +8,7 @@ import { type Foreign, isForeign, isList, mapAt, textAt } from "../.github/actio
 
 import { lineage, migratesFrom } from "./lineage.ts";
 import { emptyDatabase, query } from "./mariadb.ts";
-import { materialise } from "./tree.ts";
+import { materialise, type Tree } from "./tree.ts";
 import { root } from "./workflow.ts";
 
 /**
@@ -158,6 +158,23 @@ async function checkout(files: Readonly<Record<string, string>> = {}): Promise<s
   for (const [name, content] of Object.entries(files)) {
     await writeFile(`${where}/${name}`, content);
   }
+  return where;
+}
+
+/**
+ * A project on disk, torn down by THIS file.
+ *
+ * `tree.ts` registers an `afterEach` of its own, but a hook at the top level of
+ * an imported module attaches to whichever test FILE imported it first — the
+ * trap `mariadb.ts` describes at length — so a root materialised from here is
+ * removed only on a run that happens to reach this file before `replay.test.ts`.
+ * Proven: this file alone leaves nothing behind, and the whole suite left one
+ * project per run. Removing it from what this file already removes is
+ * independent of which files a run includes.
+ */
+async function project(tree: Tree): Promise<string> {
+  const where = await materialise(tree);
+  made.push(where);
   return where;
 }
 
@@ -364,20 +381,20 @@ test("a bun the graded repo put on PATH cannot replace the replay gate's interpr
  * step left behind holds the table the migrations built.
  */
 test("a docker the graded repo put on PATH cannot take the replay gate's dumps", async () => {
-  const project = await materialise({
+  const built = await project({
     ...migratesFrom(JOURNALLED, "drizzle"),
     ...lineage("drizzle", CREATES_THING),
   });
 
   const ran = await ranStep("db-replay", {
     inputs: { ...replayInputs, "database-url": await emptyDatabase() },
-    workspace: project,
+    workspace: built,
     path: await decoy("docker"),
   });
 
   expect(ran.output).toContain("::notice::replay:");
   expect(ran.status).toBe(0);
-  expect(await Bun.file(`${project}/replay-from-empty.schema`).text()).toContain(
+  expect(await Bun.file(`${built}/replay-from-empty.schema`).text()).toContain(
     "CREATE TABLE `thing`",
   );
 }, 120_000);
