@@ -1,35 +1,41 @@
 /**
- * An escape hatch a caller writes in a workflow, read the one way every one of
- * them is read here: one entry per line, each carrying the reason it exists.
+ * What an allowlist input is, for every gate here that has one: the entries a
+ * gate compares against, plus what is wrong with the input itself.
  *
  * **This is a checked-in copy of the allowlist half of dev-config's
- * `.github/actions/_lib/gate.ts` at the pinned SHA**, for the reason
- * `annotations.ts` gives at length and CLAUDE.md carries as a carve-out: an
- * action runs from a checkout with no `node_modules` above it, so there is no
- * import that reaches the original. dev-config#69 is where ending that is
- * argued, and a bug fixed there is a bug still here until somebody carries it
- * over.
+ * `.github/actions/_lib/gate.ts` at the pinned SHA** — `REASON`, `entriesIn`,
+ * `Allowlist`, `allowlistFrom` and `deadEntries`, theirs with the one delta
+ * named below. It is a copy for the reason `annotations.ts` gives at length:
+ * an action runs from a checkout with no `node_modules` above it, and
+ * `.github/` sits outside dev-config's `files` allowlist, so there is no import
+ * that reaches the original. dev-config#69 is where publishing it in a
+ * reachable form is argued, and CLAUDE.md's "It only adds" rule carries the
+ * carve-out that lets this file exist. A bug fixed there is a bug still here
+ * until somebody carries it over.
  *
  * Deltas from upstream, both about what this repo has rather than about the
  * rule:
- *   * `Allowlist.problems` is `readonly string[]` rather than their
- *     `Problem[]`, which is `annotations.ts`'s delta followed through.
- *   * their `deadEntries` is left out. It serves two gates that can be handed
- *     the subjects they still grade as a set; the one allowlist here parses its
- *     entries into a method and a path first, and classifies them itself —
- *     `route-coverage.ts` says why at the classifier.
+ *   * a problem is a plain string rather than their `Problem`, the same delta
+ *     `annotations.ts` carries and for the same reason: every problem this
+ *     repo's gates raise is about a database rather than about a line of the
+ *     tree, and `file=`/`line=` on an annotation pointing at nothing is dropped
+ *     by GitHub in silence.
+ *   * the lists are `readonly`. Nothing here mutates one, and the two gates
+ *     reading them — the DATETIME allowlist and the route floor — differ in
+ *     what an entry IS, which is exactly the reason neither may edit the other's
+ *     copy of it.
  */
 
 /** The separator oxlint uses between a suppression and its reason, and every allowlist here follows it. */
-const REASON = " -- ";
+export const REASON = " -- ";
 
 /**
- * One entry per line — not space-separated, because an entry contains spaces:
- * the method and path of a route, and the reason written beside it. The reason
- * is prose, prose contains commas, and an entry that ended at one would be
- * graded as two: a subject stripped of the reason written for it, and half a
- * sentence read as a subject nobody wrote. Two diagnostics, both true of an
- * input nobody typed.
+ * One entry per line — not space-separated, because an entry contains spaces: a
+ * quoted SQL identifier, the method and path of a route, and the reason each of
+ * them carries. The reason is prose, prose contains commas, and an entry that
+ * ended at one would be graded as two: a subject stripped of the reason written
+ * for it, and half a sentence read as a subject nobody wrote. Two diagnostics,
+ * both true of an input nobody typed.
  */
 function entriesIn(value: string): string[] {
   return value
@@ -82,4 +88,34 @@ export function allowlistFrom(value: string, input: string): Allowlist {
         `${input} waives ${subject} without saying why — write '${subject}${REASON}<reason>', the same price a lint directive pays`,
     ),
   };
+}
+
+/**
+ * The waivers standing for nobody, and which of the two ways each got there.
+ *
+ * The DATETIME gate is what this serves: its entries ARE the subjects it
+ * grades, so they can be subtracted from a set of them. The route floor's are
+ * not — an entry there is parsed into a method and a path first, and `options
+ * /*` and `OPTIONS /*` are one route rather than two spellings — so it
+ * classifies its own in `route-coverage.ts`, which is where the parse that
+ * makes it different lives.
+ *
+ * `live` is what the gate still grades: a subject in it is a waiver doing its
+ * job. `known` is everything the gate can see at all, and the difference
+ * between the two is the difference between an entry to drop and a name to fix
+ * — sending the first case name-hunting is how a retired rule costs every
+ * consumer an afternoon.
+ *
+ * An entry with no reason is asked none of this: its author is going back to
+ * that line regardless, and one mistake earns one diagnostic.
+ */
+export function deadEntries(
+  allowlist: Allowlist,
+  live: ReadonlySet<string>,
+  known: ReadonlySet<string>,
+  message: (subject: string, stillKnown: boolean) => string,
+): string[] {
+  return [...new Set(allowlist.entries)]
+    .filter((subject) => !live.has(subject) && !allowlist.unreasoned.has(subject))
+    .map((subject) => message(subject, known.has(subject)));
 }

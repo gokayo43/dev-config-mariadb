@@ -48,6 +48,16 @@ migrated and unqualified; its Postgres migrator puts the same table in a schema
 of its own, so the two spellings are not interchangeable. It is a migrator's
 bookkeeping rather than schema, and no gate here counts it as one.
 
+**An instant** — a point on the timeline: the same moment to everyone, wherever
+they read it from. MariaDB records one in a `TIMESTAMP`, which it converts to
+UTC on the way in and back to the reader's session zone on the way out.
+
+**A wall-clock reading** — the digits a clock showed, without the clock. A
+`DATETIME` holds exactly that and nothing about which zone produced it, so the
+same row is two different instants either side of a DST boundary or a server
+move. A shop that opens at 09:00 wherever it is has a wall-clock reading and not
+an instant, and that is the only thing `datetime-allowlist` waives.
+
 **The app** — the one program `start-command` starts and `health-url` answers
 on. Every step after the replay means this program and no other: the probe talks
 to it, the ramp measures it, and the route floor is about the routes it serves.

@@ -35,6 +35,14 @@ const CASES = {
     DATABASE_URL: "mysql://root:mariadb@127.0.0.1:13306/app",
   }),
 
+  "db-datetime/datetime.main.ts": async () => ({
+    // A database nothing is listening on: the gate opens a connection, fails to,
+    // and says so through `entry`. What this case is about is that it comes
+    // back — a gate that dies on a refused connection must still end the step.
+    DATABASE_URL: "mysql://root:mariadb@127.0.0.1:13306/app",
+    INPUT_DATETIME_ALLOWLIST: "",
+  }),
+
   "db-serving/boot.main.ts": async () => {
     const project = await materialise({});
     const port = await freePort();

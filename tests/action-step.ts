@@ -20,10 +20,12 @@ import { root } from "./workflow.ts";
  *
  * The step is extracted from the shipped `action.yml` and run, never
  * transcribed — the reason `refusals.test.ts` gives for the wrapper's own
- * block. (The sibling `datetime-gate` branch carries this harness inline in
- * `tests/action-steps.test.ts` for the one-step actions; this is the same thing
- * as a module, with a step selector, because `db-serving` ships three of them.
- * Collapsing the two is a merge, not a decision.)
+ * block. A transcription would grade a copy that cannot go stale, which is the
+ * opposite of the property wanted.
+ *
+ * Both suites that drive shipped steps come through here: `action-steps.test.ts`
+ * for the replay and DATETIME gates, `serving-steps.test.ts` for the three the
+ * serving gate ships.
  */
 
 /** The contexts the runner resolves in a step before it runs, as far as these steps use them. */
@@ -153,10 +155,14 @@ export async function checkout(files: Readonly<Record<string, string>> = {}): Pr
   return where;
 }
 
-/** A directory holding a `bun` that grades nothing and reports success, which is what a hijacked PATH buys. */
-export async function decoyBun(): Promise<string> {
-  const where = await checkout({ bun: "#!/bin/sh\nexit 0\n" });
-  await Bun.spawn(["chmod", "+x", `${where}/bun`]).exited;
+/**
+ * A directory holding a program of that name which does nothing and reports
+ * success, which is the whole of what a hijacked PATH buys: every case that
+ * uses one is asking whether the step reached the real program instead.
+ */
+export async function decoy(name: string): Promise<string> {
+  const where = await checkout({ [name]: "#!/bin/sh\nexit 0\n" });
+  await Bun.spawn(["chmod", "+x", `${where}/${name}`]).exited;
   return where;
 }
 

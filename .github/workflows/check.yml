@@ -15,9 +15,9 @@ on:
       # No descriptions on a pass-through, deliberately. dev-config declares
       # every one of these and says what it does, including the conditions under
       # which it refuses one; a second copy of that prose is a copy that drifts,
-      # and `description` is optional on a workflow_call input. The two inputs
-      # that carry one say what dev-config cannot: a fact about calling this
-      # workflow instead of that one, and a fact about a job of this repo's own.
+      # and `description` is optional on a workflow_call input. The ones that
+      # carry one say what dev-config cannot: a fact about calling this workflow
+      # instead of that one, or a fact about a job of this repo's own.
       build:
         type: boolean
         default: false
@@ -83,6 +83,15 @@ on:
       route-allowlist:
         type: string
         default: ""
+      datetime-allowlist:
+        description: >-
+          The columns of the migrated database whose value really is a
+          wall-clock reading rather than an instant, as `table.column -- why`
+          entries, one per line. An input of this repo's own, and the one
+          dev-config has no name for at all — docs/gates/db-datetime.md is what
+          it waives and why it is spelled this way.
+        type: string
+        default: ""
 
 permissions:
   contents: read
@@ -136,6 +145,7 @@ jobs:
           # why they are compared at all.
           START_COMMAND_DEFAULT: bun run start
           HEALTH_URL_DEFAULT: http://localhost:3000/api/health
+          DATETIME_ALLOWLIST: ${{ inputs['datetime-allowlist'] }}
         shell: bash
         run: |
           set -euo pipefail
@@ -185,6 +195,8 @@ jobs:
             "the ramp runs against the app the database job boots"
           needs_job route-allowlist "$ROUTE_ALLOWLIST" \
             "the route floor is measured across the database job's ramp"
+          needs_job datetime-allowlist "$DATETIME_ALLOWLIST" \
+            "it waives columns the database job's DATETIME step grades"
           changed_from_default start-command "$START_COMMAND" "$START_COMMAND_DEFAULT" \
             "it is how the database job's boot step starts the app"
           changed_from_default health-url "$HEALTH_URL" "$HEALTH_URL_DEFAULT" \
@@ -259,24 +271,28 @@ jobs:
 
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
 
-      # Both facts every gate step below is handed, read here and nowhere else,
+      # What the gate steps below are handed, read here and nowhere else,
       # because here is the last moment in this job at which no line of the
       # graded repo's own code has run yet — not its install scripts, not its
-      # build, not its migrator.
+      # build, not its migrator. A step takes the ones it needs: the search path
+      # goes to the step that resolves a program by name.
       #
       # A step writes $GITHUB_ENV and $GITHUB_PATH and the runner folds both
       # into the environment of every LATER step; a step output cannot be
-      # rewritten once set. So a repo that prepends a directory holding its own
-      # `bun` would replace the interpreter the gates run under — the gate's own
-      # code never executing, the step green — and one that prepends its own
-      # `curl` or `sha256sum` would hand the ramp a "verified" k6 of its
-      # choosing. Neither reaches a value captured before it ran. This is the
-      # same bar `_lib/annotations.ts` sets against `::stop-commands::` and
+      # rewritten once set. So a migrator that exports DATABASE_URL would
+      # otherwise choose which database the gates grade, and one that prepends a
+      # directory of its own would decide what `bun` and `docker` mean, and what
+      # `curl` and `sha256sum` mean to the ramp's pinned fetch — the gate's own
+      # code never executing, or its dumps taken by something that was never the
+      # server, or a "verified" k6 of that repo's choosing, and the step green in
+      # every case. None of them reaches a value captured before it ran. This is the same bar
+      # `_lib/annotations.ts` sets against `::stop-commands::` and
       # `db-replay/database.ts` sets against a migrator's stdout: what the gate
       # grades is not the graded repo's to decide.
       - id: pinned
         run: |
           {
+            echo "database-url=$DATABASE_URL"
             echo "bun=$(command -v bun)"
             echo "path=$PATH"
           } >> "$GITHUB_OUTPUT"
@@ -301,10 +317,23 @@ jobs:
       # because GitHub gives a service image no way to read a value declared
       # anywhere else. tests/wrapper-inputs.test.ts is what holds the two to one
       # digest.
-      - uses: gokayo43/dev-config-mariadb/.github/actions/db-replay@94bb5239ee1a9d7743bc917110dd5dd9d43be22f
+      - uses: gokayo43/dev-config-mariadb/.github/actions/db-replay@2ab691306b2c02f0017926ee5b3491705d890999
         with:
           # renovate: datasource=docker depName=mariadb
           db-image: mariadb:11.4@sha256:4f1d8d202fcf7bcb3902f63af09f9c1a050c2922a89652f22abaec0d4f015e83
+          database-url: ${{ steps.pinned.outputs['database-url'] }}
+          bun: ${{ steps.pinned.outputs.bun }}
+          path: ${{ steps.pinned.outputs.path }}
+
+      # After the replay and never before it: this gate grades the catalogue the
+      # migrations produced, so it needs the schema that step builds rather than
+      # one written by hand. Its own pin, because an action and the workflow
+      # pinning it are two commits — CLAUDE.md, "Releasing an action".
+      - uses: gokayo43/dev-config-mariadb/.github/actions/db-datetime@2ab691306b2c02f0017926ee5b3491705d890999
+        with:
+          datetime-allowlist: ${{ inputs['datetime-allowlist'] }}
+          database-url: ${{ steps.pinned.outputs['database-url'] }}
+          bun: ${{ steps.pinned.outputs.bun }}
 
       # Migrations applying says nothing about whether an app can run against
       # what they built, a route table answering says nothing about whether any

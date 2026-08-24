@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 
-import { checkout, decoyBun, ranStep } from "./action-step.ts";
+import { checkout, decoy, ranStep } from "./action-step.ts";
 
 /**
  * What the shipped serving steps do when the repository they are grading has
@@ -71,7 +71,7 @@ test("a bun the graded repo put on PATH cannot replace the boot step's interpret
   const ran = await ranStep("db-serving", "Boot", {
     inputs: BOOT,
     workspace: await checkout(),
-    path: await decoyBun(),
+    path: await decoy("bun"),
   });
 
   expect(ran.output).toContain(BOOT_REFUSES);
@@ -92,7 +92,7 @@ test("a bun the graded repo put on PATH cannot replace the probe step's interpre
   const ran = await ranStep("db-serving", "probe", {
     inputs: PROBE,
     workspace: await checkout(),
-    path: await decoyBun(),
+    path: await decoy("bun"),
   });
 
   expect(ran.output).toContain(PROBE_REFUSES);

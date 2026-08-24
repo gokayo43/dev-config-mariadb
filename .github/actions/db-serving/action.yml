@@ -124,7 +124,7 @@ runs:
       run: |
         set -euo pipefail
         # shellcheck source=/dev/null
-        . "$GITHUB_ACTION_PATH/gate.sh"
+        . "$GITHUB_ACTION_PATH/../_lib/gate.sh"
         gate boot.main.ts
 
     # Between the boot and the ramp, which is the only place it can ask what it
@@ -151,7 +151,7 @@ runs:
       run: |
         set -euo pipefail
         # shellcheck source=/dev/null
-        . "$GITHUB_ACTION_PATH/gate.sh"
+        . "$GITHUB_ACTION_PATH/../_lib/gate.sh"
         gate probe.main.ts
 
     # A number, not a latency threshold. On a shared runner a latency bound
@@ -191,7 +191,7 @@ runs:
       run: |
         set -euo pipefail
         # shellcheck source=/dev/null
-        . "$GITHUB_ACTION_PATH/gate.sh"
+        . "$GITHUB_ACTION_PATH/../_lib/gate.sh"
         # Before the fetch, not after it: k6.sh spends a network round trip, and
         # a step that spends it and then refuses on a missing input has spent it
         # for nothing.

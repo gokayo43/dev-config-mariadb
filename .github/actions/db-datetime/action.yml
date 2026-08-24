@@ -1,0 +1,67 @@
+name: MariaDB DATETIME gate
+description: >-
+  Asks the database the replay just built which of its columns are DATETIME —
+  the type that stores wall-clock digits with no zone — and requires a reasoned
+  allowlist entry for each. The caller declares the service, so it owns the URL
+  and hands it in; one value means no two steps can disagree about which
+  database was graded. docs/gates/db-datetime.md is what this proves and what it
+  cannot catch.
+
+inputs:
+  datetime-allowlist:
+    description: >-
+      The columns whose value really is a wall-clock reading rather than an
+      instant, as `table.column -- why` entries, one per line — an identifier
+      may itself contain a space. A bare `table.column` because MySQL and
+      MariaDB have no schemas within a database: the schema IS the database, and
+      this gate reads one. The reason is part of the entry, the price a lint
+      directive pays. An entry naming a column the database does not have, or
+      one that is not DATETIME, is refused rather than kept.
+    default: ""
+  database-url:
+    description: >-
+      The database to grade, as the calling job read it before running a line of
+      the graded repo's code. An input rather than an inherited variable
+      because a step of the graded repo's own can export one for every later
+      step to inherit, and the database this gate reads is not that repo's to
+      choose.
+    required: true
+  bun:
+    description: >-
+      The absolute path to the interpreter this gate runs under, from the same
+      reading. A bare `bun` is resolved through a PATH the graded repo's own
+      steps can prepend to, which replaces this gate with a program that exits 0.
+    required: true
+
+# No `path` input, and that is a decision rather than an omission: this gate
+# resolves no name at all. Its step runs an absolute interpreter, its own
+# imports spawn nothing, and its run block is shell builtins — so the search
+# path is nobody's to hijack here, and an input the step never read would be
+# dead config a reader would later "fix". The gates that DO resolve a name take
+# it: db-replay for `docker`, db-serving for `setsid`, `bash` and the k6 fetch's
+# `curl`, `sha256sum` and `tar`. `_lib/gate.sh` is where the rule is written.
+runs:
+  using: composite
+  steps:
+    - name: Every instant carries its zone
+      shell: bash
+      # The action's own checkout, never the graded repo's. `bun` reads a
+      # top-level `preload` out of a `bunfig.toml` in its working directory
+      # (probed: only that directory — no parent is walked, and no global file
+      # is read), so a gate running in the graded checkout runs whatever that
+      # repo's bunfig names, before a line of the gate. A consumer need not be
+      # hostile for this to matter: a legitimate preload injects the same way.
+      working-directory: ${{ github.action_path }}
+      env:
+        INPUT_DATETIME_ALLOWLIST: ${{ inputs['datetime-allowlist'] }}
+        INPUT_BUN: ${{ inputs.bun }}
+        # Declared by this step, which is what makes it this step's: the runner
+        # overlays a step's own `env:` over the environment it inherited, so a
+        # variable of this name written into $GITHUB_ENV earlier does not reach
+        # the gate.
+        DATABASE_URL: ${{ inputs['database-url'] }}
+      run: |
+        set -euo pipefail
+        # shellcheck source=/dev/null
+        . "$GITHUB_ACTION_PATH/../_lib/gate.sh"
+        gate datetime.main.ts

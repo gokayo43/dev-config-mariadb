@@ -26,8 +26,8 @@ import from the dev-config this repo installs, by any route. Several files
 therefore carry checked-in copies of theirs at the pinned SHA, and each says so
 in its own header with its deltas named: `_lib/annotations.ts` (the writing half
 of their `_lib/gate.ts`), `_lib/foreign.ts` (its narrowing half),
-`_lib/allowlist.ts` (its `-- why` half), the three functions
-`db-replay/database.ts` names (`databaseIn`, `migrate`, `rowsIn`), and what the
+`_lib/allowlist.ts` (its `-- why` half), the four functions
+`db-replay/database.ts` names (`databaseIn`, `migrate`, `rowsIn`, `textIn`), and what the
 serving gate ports — `db-serving/probe.ts`, `route-coverage.ts`, `capacity.ts`,
 `route-log.ts` and the k6 script `ramp.js`.
 [dev-config#69](https://github.com/gokayo43/dev-config/issues/69) is where
@@ -56,33 +56,39 @@ that has been improved says so at the line that improved it.
   call into dev-config's `check.yml` with `database: false`, the always-running
   `refusals` job that fails a call asking for a database-job input without the
   job, and `database`, which is every MariaDB gate this repo has — one job, and
-  CONTEXT.md's entry for the term says why there will stay one. `#2` and `#3`
-  are shipped; `#4`–`#6` land as further steps of it, each with the composite
-  action that runs it, its own suite, and its page under `docs/gates/` — the
-  shape dev-config's "Adding a gate" describes.
+  CONTEXT.md's entry for the term says why there will stay one. Every gate step
+  in it is handed the database and the interpreter by a step that reads them at
+  the top of that job, before a line of the graded repo's own code has run, and
+  the search path too wherever the step resolves a program by name. `#2`, `#3`
+  and `#5` are shipped; `#4` and `#6` land as further steps of it, each with the
+  composite action that runs it, its own suite, and its page under `docs/gates/`
+  — the shape dev-config's "Adding a gate" describes.
 - `.github/workflows/ci.yml` — this repo's own gate, which is dev-config's
   `check.yml` called directly. It cannot be the wrapper: a commit cannot pin its
   own SHA, so the wrapper's pin is always one commit behind whatever is under
   review.
 - `.github/actions/` — the gates themselves, each a `<name>.ts` the suite drives
-  and a `<name>.main.ts` the action runs. Two directories so far, both steps of
-  the one database job: `db-replay` (`#2`) and `db-serving` (`#3`, the boot,
-  probe and ramp). Each splits what talks to something from what is pure, so
-  that a verdict can be driven without the thing under it —
+  and a `<name>.main.ts` the action runs. Three directories, all steps of the
+  one database job: `db-replay` (`#2`), `db-datetime` (`#5`) and `db-serving`
+  (`#3`, the boot, probe and ramp). Each splits what talks to something from
+  what is pure, so that a verdict can be driven without the thing under it —
   `db-replay/database.ts` and `db-replay/schema.ts`, `db-serving/ramp.ts` and
-  `db-serving/capacity.ts`. `_lib/` is what every action shares:
-  `annotations.ts` (the log protocol and the run summary), `foreign.ts` (the one
-  place a document nobody here wrote is narrowed) and `allowlist.ts` (the one
-  place an escape hatch is made to carry its reason).
+  `db-serving/capacity.ts`; `db-datetime` reads its catalogue through the first
+  of those and opens no connection of its own. `_lib/` is what every action
+  shares: `annotations.ts` (the log protocol and the run summary), `foreign.ts`
+  (the one place a document nobody here wrote is narrowed), `allowlist.ts` (how
+  an allowlist input is read, what a reason costs, and what a dead entry costs)
+  and `gate.sh` (how every gate step starts its own program).
 - **A gate step takes nothing from the repository it grades.** It runs in the
   action's own checkout — `bun` reads a `bunfig.toml` `preload` from its working
   directory, and a graded repo's is not the gate's to run — under an interpreter
-  and a search path the calling job read before that repo's install scripts,
-  build or migrator could rewrite either. `check.yml`'s `pinned` step is where
-  they are read, `db-serving/gate.sh` is where they are refused when empty, and
-  the project reaches the gate as a path rather than as the place it was run.
-  Anything a new gate resolves by name — a binary, a config, a database URL —
-  belongs on that list.
+  and, where it resolves a program by name, a search path that the calling job
+  read before that repo's install scripts, build or migrator could rewrite
+  either. `check.yml`'s `pinned` step is where they are read, `_lib/gate.sh` is
+  where they are refused when empty and where the rule about which steps need
+  which is written, and the project reaches the gate as a path rather than as
+  the place it was run. Anything a new gate resolves by name — a binary, a
+  config, a database URL — belongs on that list.
 - The evidence artifact belongs to the **job**, not to either action — the
   upload step in `check.yml` says why, and is where `db-gate-evidence` is read.
   What that costs a new gate: a file it leaves in the runner goes on that step's
@@ -95,26 +101,25 @@ that has been improved says so at the line that improved it.
   dev-config does not declare, the call carries exactly one literal and it is
   `database: false`, only one job calls that workflow at all, what the README
   tables and what it says is refused cover dev-config's input surface exactly,
-  the four carriers of the dev-config pin agree, the action pin names a commit
-  this repo carries, and the server image is written once as far as a reader is
-  concerned. `refusals.test.ts` runs the wrapper's own `run:` block — extracted
-  from the shipped YAML rather than transcribed, with the environment derived
-  from its own `env:` block — over the whole truth table of the rule this
-  workflow adds. `serving-job.test.ts` grades the wiring no gate can see from
-  inside: which steps the job runs, what the app is given, whether every file a
-  step leaves in the runner is actually uploaded, and that every step declares
-  the two pins above. `serving-steps.test.ts` runs the shipped `run:` blocks
-  against a checkout that fights back — a `bunfig.toml` preloading its own code,
-  a `bun` of its own first on PATH — through the harness in `action-step.ts`.
-  (The sibling gate's branch carries the same harness inline for its one-step
-  actions; collapsing the two is a merge, not a decision.) `entrypoints.test.ts`
-  is the one lane that runs what GitHub runs: every `*.main.ts` as a process,
-  under a wall clock, asserting it **ends** — the property no in-process test
-  can see, and the one a gate that starts a long-lived app gets wrong. The rest
-  of the suite
-  drives the gates against the real thing — MariaDB containers it starts and
-  removes itself, and a real app process on a real port — which is why `ci.yml`
-  sets `test-network`.
+  the four carriers of the dev-config pin agree, every action pin names a commit
+  this repo carries AND one whose `.github/actions` is the tree here now, and
+  the server image is written once as far as a reader is concerned.
+  `refusals.test.ts` runs the wrapper's own `run:` block — extracted from the
+  shipped YAML rather than transcribed, with the environment derived from its
+  own `env:` block — over the whole truth table of the rule this workflow adds.
+  `serving-job.test.ts` grades the wiring no gate can see from inside: which
+  steps the job runs, what the app is given, whether every file a step leaves in
+  the runner is actually uploaded, and that every step declares the pins above.
+  `action-steps.test.ts` and `serving-steps.test.ts` run the shipped `run:`
+  blocks against a checkout that fights back — a `bunfig.toml` preloading its
+  own code, a `DATABASE_URL` naming a database of its own, a `bun` or a `docker`
+  of its own first on PATH — both through the one harness in `action-step.ts`.
+  `entrypoints.test.ts` is the lane that runs what GitHub runs: every
+  `*.main.ts` as a process, under a wall clock, asserting it **ends** — the
+  property no in-process test can see, and the one a gate that starts a
+  long-lived app gets wrong. The rest of the suite drives the gates against the
+  real thing — MariaDB containers it starts and removes itself, and a real app
+  process on a real port — which is why `ci.yml` sets `test-network`.
 
   The one thing the suite cannot run has a job of its own in `ci.yml`: nothing
   in `bun test` may fetch a binary, so the shipped k6 ramp is executed by
@@ -158,11 +163,12 @@ repo's actions by full path and SHA, and an action and the workflow pinning it
 are two commits. dev-config carries the same shape; `check.yml` there is v0.50.1
 pinning actions at v0.50.0.
 
-Two consequences, both live now that `#2` has shipped one:
+Two consequences, both live from the first action this repo shipped:
 
 - **A change to an action is two commits**, the second re-pinning the first.
-  `tests/wrapper-inputs.test.ts` fails when the pin names a commit this repo
-  does not carry, which is the loud half.
+  `tests/wrapper-inputs.test.ts` fails when a pin names a commit this repo does
+  not carry, and when it names one whose actions are no longer the actions here
+  — a pin that resolves but ships something else is the half nobody notices.
 - **The pinned commit has to survive.** A squash merge orphans it, and an
   orphaned pin is an action GitHub cannot fetch — a database job that fails for
   every consumer at once. Tagging the release is what keeps it reachable, and

@@ -92,25 +92,65 @@ async function ran(over: Readonly<Record<string, string>>): Promise<Ran> {
  * fires on the only correct way to use an input is a guard somebody turns off.
  */
 const AIMED_AT_THE_JOB = [
-  ["DB_GATE_EVIDENCE", "db-gate-evidence", "mariadb-evidence"],
-  ["PROBE_COMMAND", "probe-command", "bun run scripts/probe.ts"],
-  ["CAPACITY_SCRIPT", "capacity-script", "scripts/ramp.js"],
-  ["CAPACITY_PATH", "capacity-path", "/api/things"],
+  [
+    "DB_GATE_EVIDENCE",
+    "db-gate-evidence",
+    "mariadb-evidence",
+    "names the artifact the database job uploads",
+  ],
+  [
+    "PROBE_COMMAND",
+    "probe-command",
+    "bun run scripts/probe.ts",
+    "the probe runs against the app the database job boots",
+  ],
+  [
+    "CAPACITY_SCRIPT",
+    "capacity-script",
+    "scripts/ramp.js",
+    "the ramp runs against the app the database job boots",
+  ],
+  [
+    "CAPACITY_PATH",
+    "capacity-path",
+    "/api/things",
+    "the ramp runs against the app the database job boots",
+  ],
   [
     "ROUTE_ALLOWLIST",
     "route-allowlist",
     "OPTIONS /* -- the cors plugin answers before a route does",
+    "the route floor is measured across the database job's ramp",
   ],
-  ["START_COMMAND", "start-command", "bun run serve"],
-  ["HEALTH_URL", "health-url", "http://localhost:8080/health"],
+  [
+    "DATETIME_ALLOWLIST",
+    "datetime-allowlist",
+    "shop.opens_at -- the shop's clock",
+    "waives columns the database job's DATETIME step grades",
+  ],
+  [
+    "START_COMMAND",
+    "start-command",
+    "bun run serve",
+    "it is how the database job's boot step starts the app",
+  ],
+  [
+    "HEALTH_URL",
+    "health-url",
+    "http://localhost:8080/health",
+    "what the database job's boot step polls",
+  ],
 ] as const;
 
-for (const [variable, input, value] of AIMED_AT_THE_JOB) {
+for (const [variable, input, value, because] of AIMED_AT_THE_JOB) {
   test(`${input} without the job it drives is refused rather than ignored`, async () => {
     const refused = await ran({ DATABASE: "false", [variable]: value });
 
     expect(refused.status).toBe(1);
     expect(refused.output).toContain(`::error::${input} needs database: true`);
+    // The name alone is half a rule: what a caller needs is why the input is
+    // aimed at a job they left off.
+    expect(refused.output).toContain(because);
   });
 
   test(`${input} with the job it drives is what the input is for`, async () => {
@@ -120,6 +160,24 @@ for (const [variable, input, value] of AIMED_AT_THE_JOB) {
     expect(allowed.output).not.toContain("::error::");
   });
 }
+
+/**
+ * Every wrong input in one call earns every diagnostic. The most plausible
+ * wrong implementation of a guard that has grown a second rule is a chain that
+ * stops at the first — which costs the caller a CI round-trip per input, and
+ * hides how many of them were aimed at a job that is off.
+ */
+test("a call carrying every misplaced input is told about every one of them", async () => {
+  const refused = await ran({
+    DATABASE: "false",
+    ...Object.fromEntries(AIMED_AT_THE_JOB.map(([variable, , value]) => [variable, value])),
+  });
+
+  expect(refused.status).toBe(1);
+  for (const [, input] of AIMED_AT_THE_JOB) {
+    expect(refused.output).toContain(`::error::${input} needs database: true`);
+  }
+});
 
 test("a call that asks for neither passes, which is every consumer that has not adopted", async () => {
   const quiet = await ran({ DATABASE: "false" });
