@@ -194,7 +194,7 @@ jobs:
       # because GitHub gives a service image no way to read a value declared
       # anywhere else. tests/wrapper-inputs.test.ts is what holds the two to one
       # digest.
-      - uses: gokayo43/dev-config-mariadb/.github/actions/db-replay@26dce97d68b3dcb8a440778024ff5cf555e01f64
+      - uses: gokayo43/dev-config-mariadb/.github/actions/db-replay@7fccdb791976b28325dabb8bc8e56edd62b18a4c
         with:
           # renovate: datasource=docker depName=mariadb
           db-image: mariadb:11.4@sha256:4f1d8d202fcf7bcb3902f63af09f9c1a050c2922a89652f22abaec0d4f015e83
