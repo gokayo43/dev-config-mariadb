@@ -86,6 +86,32 @@ test("a dump line that is a workflow command reaches the log as text", async () 
   expect(commands(lines)).toEqual(["::error::replaying changed the schema"]);
 });
 
+/**
+ * The same class, one character further on. The runner reads stdout with
+ * `StreamReader.ReadLine`, which ends a line on a carriage return as well as on
+ * a line feed — so a dump line carrying a bare `\r` is one line to a split on
+ * `\n` and two to the runner, and the second would have arrived with no margin
+ * on it. MariaDB really does produce such a line: a routine body is stored and
+ * re-dumped as source text, so `select 'x\r::stop-commands::…'` survives
+ * verbatim.
+ */
+test("a bare carriage return inside a dump line does not smuggle a line past the margin", async () => {
+  const lines = await written(() => {
+    relay("  select 'x\r::stop-commands::deadbeef' as v");
+  });
+
+  expect(lines).toEqual(["|   select 'x", "| ::stop-commands::deadbeef' as v"]);
+  expect(commands(lines)).toEqual([]);
+});
+
+test("a CRLF ends one line rather than two", async () => {
+  expect(await written(() => relay("first\r\nsecond"))).toEqual(["| first", "| second"]);
+});
+
+test("a trailing carriage return is a line ending too", async () => {
+  expect(await written(() => relay("only\r"))).toEqual(["| only"]);
+});
+
 test("relayed output keeps its shape, one line at a time", async () => {
   expect(await written(() => relay("first\nsecond\nthird"))).toEqual([
     "| first",

@@ -80,6 +80,33 @@ function commanded(message: string): string {
 const MARGIN = "| ";
 
 /**
+ * What the runner counts as the end of a line, which is not what `split("\n")`
+ * counts: **a carriage return, a line feed, or a carriage return followed by a
+ * line feed** — three terminators, not one.
+ *
+ * That set is `StreamReader.ReadLine`'s, and it is the runner's because
+ * `ProcessInvoker` reads a process's stdout with it (actions/runner,
+ * `src/Runner.Sdk/ProcessInvoker.cs`). dotnet/runtime's `StreamReader.cs` both
+ * says so in its contract and implements it as `IndexOfAny('\r', '\n')`.
+ *
+ * It is the fact this file cannot be read off its own code, and getting it
+ * wrong silently undoes the margin above: a dump line holding a bare carriage
+ * return is ONE line to a split on `\n` — so it takes one margin, at the front
+ * — and TWO lines to the runner, the second beginning wherever the author put
+ * the `\r`. `select 'x\r::stop-commands::…'` is such a line, and MariaDB will
+ * produce it: a routine, trigger or view body is stored and re-dumped as source
+ * text, so a bare carriage return anywhere in one survives into the dump
+ * verbatim.
+ *
+ * A column `DEFAULT` or `COMMENT` will not, and that is the road not to walk
+ * back down: `mariadb-dump` escapes a carriage return inside a string literal
+ * as the two characters `\r`. Only the source-text paths carry the raw byte,
+ * which is why this splits on all three terminators rather than trusting where
+ * a dump's text comes from.
+ */
+const ENDS_A_LINE = /\r\n|\r|\n/u;
+
+/**
  * Output this repo did not write, put on the log without letting it speak to
  * the runner. Line by line, because the evidence is multi-line and its shape is
  * the point — a single escaped blob would arrive as one unreadable line.
@@ -87,10 +114,15 @@ const MARGIN = "| ";
  * `commanded` is deliberately NOT applied: these lines are plain stdout rather
  * than the body of a workflow command, so GitHub decodes no escapes in them and
  * a `%` run through it would render as `%25`.
+ *
+ * Cut on every terminator the runner honours rather than on `\n` alone — see
+ * `ENDS_A_LINE`. Splitting more finely than the runner would costs a relayed
+ * line that renders as two; splitting less finely hands it a line with no
+ * margin on it.
  */
 export function relay(output: string): void {
-  const lines = output.split("\n");
-  // A trailing newline is a line ending, not an empty last line to print.
+  const lines = output.split(ENDS_A_LINE);
+  // A trailing terminator ends the last line rather than starting an empty one.
   if (lines.at(-1) === "") lines.pop();
   for (const line of lines) console.log(`${MARGIN}${line}`);
 }
