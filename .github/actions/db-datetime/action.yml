@@ -33,6 +33,13 @@ inputs:
       steps can prepend to, which replaces this gate with a program that exits 0.
     required: true
 
+# No `path` input, and that is a decision rather than an omission: this gate
+# resolves no name at all. Its step runs an absolute interpreter, its own
+# imports spawn nothing, and its run block is shell builtins — so the search
+# path is nobody's to hijack here, and an input the step never read would be
+# dead config a reader would later "fix". The gates that DO resolve a name take
+# it: db-replay for `docker`, db-serving for `setsid`, `bash` and the k6 fetch's
+# `curl`, `sha256sum` and `tar`. `_lib/gate.sh` is where the rule is written.
 runs:
   using: composite
   steps:
@@ -55,11 +62,6 @@ runs:
         DATABASE_URL: ${{ inputs['database-url'] }}
       run: |
         set -euo pipefail
-        # A composite action maps an input nobody passed to the empty string, so
-        # `required: true` above is a promise nothing enforces at runtime — and
-        # an empty interpreter is `command not found` naming nothing.
-        [ -n "$INPUT_BUN" ] || {
-          echo "::error::the bun input is empty — the calling job passes the interpreter this gate runs under, read before the graded repo's code could put another one on PATH"
-          exit 1
-        }
-        "$INPUT_BUN" "$GITHUB_ACTION_PATH/datetime.main.ts"
+        # shellcheck source=/dev/null
+        . "$GITHUB_ACTION_PATH/../_lib/gate.sh"
+        gate datetime.main.ts

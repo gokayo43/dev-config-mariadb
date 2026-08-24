@@ -1,6 +1,6 @@
 # The DATETIME gate
 
-`database: true` adds this to the `replay` job, as the step after the
+`database: true` adds this to the `database` job, as the step after the
 migrations: the database that replay just built is asked which of its columns
 are `DATETIME`, and every one of them has to carry a reasoned entry in
 `datetime-allowlist` or the step goes red naming it.

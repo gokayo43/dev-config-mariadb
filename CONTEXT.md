@@ -18,8 +18,11 @@ calls in place of dev-config's `check.yml`.
 consumer's own tree.
 
 **A database job** — a job of this repo's own that grades a MariaDB the
-consuming repo's migrations built. dev-config's job of that name is Postgres,
-and the two never run in one call.
+consuming repo's migrations built, and the app that has to run against it.
+dev-config's job of that name is Postgres, and the two never run in one call.
+There is one, and the steps of `#3`–`#6` land in it rather than beside it: the
+database is the job's service container, so a second job would be grading an
+empty one.
 
 **Pass-through** — an input the wrapper declares only in order to hand it to
 dev-config's `check.yml` under the same name. A pass-through has no behaviour
@@ -54,6 +57,12 @@ UTC on the way in and back to the reader's session zone on the way out.
 same row is two different instants either side of a DST boundary or a server
 move. A shop that opens at 09:00 wherever it is has a wall-clock reading and not
 an instant, and that is the only thing `datetime-allowlist` waives.
+
+**The app** — the one program `start-command` starts and `health-url` answers
+on. Every step after the replay means this program and no other: the probe talks
+to it, the ramp measures it, and the route floor is about the routes it serves.
+A repo with a second program in it — a web app beside an API — serves routes
+this gate never sees, because only the booted one carries the route log.
 
 **A consumer** — a repo whose `ci.yml` calls the wrapper. There are two, both
 named in `README.md`, and both are older than the fleet's Postgres decision.

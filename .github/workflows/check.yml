@@ -52,13 +52,35 @@ on:
         default: ""
       database:
         description: >-
-          Replay the repo's own migrations onto an empty MariaDB, twice, and
-          compare the schema either side. This is a job of this repo's own and
-          this input never reaches dev-config's check.yml, whose job of that
-          name is Postgres.
+          Replay the repo's own migrations onto an empty MariaDB, twice, compare
+          the schema either side, then boot the app against the result, probe it
+          where the repo has a probe, and ramp it. This is a job of this repo's
+          own and this input never reaches dev-config's check.yml, whose job of
+          that name is Postgres.
         type: boolean
         default: false
       db-gate-evidence:
+        type: string
+        default: ""
+      start-command:
+        type: string
+        default: bun run start
+      health-url:
+        type: string
+        default: http://localhost:3000/api/health
+      probe-command:
+        type: string
+        default: ""
+      probe-timeout:
+        type: string
+        default: ""
+      capacity-script:
+        type: string
+        default: ""
+      capacity-path:
+        type: string
+        default: ""
+      route-allowlist:
         type: string
         default: ""
       datetime-allowlist:
@@ -94,7 +116,7 @@ jobs:
       # dev-config declares at the pin above.
       database: false
 
-  # Every input aimed at a database job is a request that job would otherwise
+  # Every input aimed at the database job is a request that job would otherwise
   # never see, and a gate nobody notices is off is the worst kind — so a call
   # that asks for one without asking for the job is refused rather than ignored.
   #
@@ -110,6 +132,19 @@ jobs:
       - env:
           DATABASE: ${{ inputs.database }}
           DB_GATE_EVIDENCE: ${{ inputs['db-gate-evidence'] }}
+          START_COMMAND: ${{ inputs['start-command'] }}
+          HEALTH_URL: ${{ inputs['health-url'] }}
+          PROBE_COMMAND: ${{ inputs['probe-command'] }}
+          PROBE_TIMEOUT: ${{ inputs['probe-timeout'] }}
+          CAPACITY_SCRIPT: ${{ inputs['capacity-script'] }}
+          CAPACITY_PATH: ${{ inputs['capacity-path'] }}
+          ROUTE_ALLOWLIST: ${{ inputs['route-allowlist'] }}
+          # The two defaults above, written out a second time because a step
+          # cannot read an input's declared default. tests/refusals.test.ts
+          # holds the two statements together; `changed_from_default` below is
+          # why they are compared at all.
+          START_COMMAND_DEFAULT: bun run start
+          HEALTH_URL_DEFAULT: http://localhost:3000/api/health
           DATETIME_ALLOWLIST: ${{ inputs['datetime-allowlist'] }}
         shell: bash
         run: |
@@ -119,17 +154,64 @@ jobs:
             echo "::error::$1"
             wrong=1
           }
-          if [ "$DATABASE" != true ]; then
-            if [ -n "$DB_GATE_EVIDENCE" ]; then
-              refuse "db-gate-evidence needs database: true — it names the artifact the replay job uploads, and this call leaves that job off"
+
+          # The rule has two shapes and this is the first: an input that
+          # defaults to "" was passed iff it is non-empty.
+          #
+          # Both helpers end in `return 0`, and that is not decoration — under
+          # `set -e` a function whose last statement is a test that failed
+          # returns non-zero, and the step would die on a rule that correctly
+          # did not fire.
+          needs_job() {
+            if [ "$DATABASE" != true ] && [ -n "$2" ]; then
+              refuse "$1 needs database: true — $3, and this call leaves that job off"
             fi
-            if [ -n "$DATETIME_ALLOWLIST" ]; then
-              refuse "datetime-allowlist needs database: true — it waives columns the replay job's DATETIME step grades, and this call leaves that job off"
+            return 0
+          }
+
+          # The second shape, for the two inputs that carry a value rather than
+          # an empty default: a workflow_call input cannot be asked whether the
+          # caller passed it, so "passed" is spelled "differs from the default".
+          # That leaves one caller invisible — the one who passes exactly the
+          # default — which docs/gates/db-serving.md names rather than papers
+          # over, and dev-config#66 is the same two inputs going unrefused
+          # there, where the guard has only the first shape.
+          changed_from_default() {
+            if [ "$DATABASE" != true ] && [ "$2" != "$3" ]; then
+              refuse "$1 needs database: true — $4, and this call leaves that job off"
             fi
+            return 0
+          }
+
+          needs_job db-gate-evidence "$DB_GATE_EVIDENCE" \
+            "it names the artifact the database job uploads"
+          needs_job probe-command "$PROBE_COMMAND" \
+            "the probe runs against the app the database job boots"
+          needs_job probe-timeout "$PROBE_TIMEOUT" \
+            "it bounds a probe the database job runs"
+          needs_job capacity-script "$CAPACITY_SCRIPT" \
+            "the ramp runs against the app the database job boots"
+          needs_job capacity-path "$CAPACITY_PATH" \
+            "the ramp runs against the app the database job boots"
+          needs_job route-allowlist "$ROUTE_ALLOWLIST" \
+            "the route floor is measured across the database job's ramp"
+          needs_job datetime-allowlist "$DATETIME_ALLOWLIST" \
+            "it waives columns the database job's DATETIME step grades"
+          changed_from_default start-command "$START_COMMAND" "$START_COMMAND_DEFAULT" \
+            "it is how the database job's boot step starts the app"
+          changed_from_default health-url "$HEALTH_URL" "$HEALTH_URL_DEFAULT" \
+            "it is what the database job's boot step polls and what its ramp measures"
+
+          # Asked whatever the job, because it is a fact about the pair rather
+          # than about the job: a bound with no command under it bounds nothing,
+          # and an input that reaches a step which never reads it is the class
+          # every refusal here exists to kill.
+          if [ -z "$PROBE_COMMAND" ] && [ -n "$PROBE_TIMEOUT" ]; then
+            refuse "probe-timeout needs probe-command — it bounds that command, and on its own it bounds nothing"
           fi
           exit "$wrong"
 
-  replay:
+  database:
     if: inputs.database
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -199,10 +281,11 @@ jobs:
       # into the environment of every LATER step; a step output cannot be
       # rewritten once set. So a migrator that exports DATABASE_URL would
       # otherwise choose which database the gates grade, and one that prepends a
-      # directory of its own would decide what `bun` and `docker` mean — the
-      # gate's own code never executing, or its dumps taken by something that
-      # was never the server, and the step green either way. None of the three
-      # reaches a value captured before it ran. This is the same bar
+      # directory of its own would decide what `bun` and `docker` mean, and what
+      # `curl` and `sha256sum` mean to the ramp's pinned fetch — the gate's own
+      # code never executing, or its dumps taken by something that was never the
+      # server, or a "verified" k6 of that repo's choosing, and the step green in
+      # every case. None of them reaches a value captured before it ran. This is the same bar
       # `_lib/annotations.ts` sets against `::stop-commands::` and
       # `db-replay/database.ts` sets against a migrator's stdout: what the gate
       # grades is not the graded repo's to decide.
@@ -234,11 +317,10 @@ jobs:
       # because GitHub gives a service image no way to read a value declared
       # anywhere else. tests/wrapper-inputs.test.ts is what holds the two to one
       # digest.
-      - uses: gokayo43/dev-config-mariadb/.github/actions/db-replay@2ab691306b2c02f0017926ee5b3491705d890999
+      - uses: gokayo43/dev-config-mariadb/.github/actions/db-replay@3d650f2a40dfc609bddb5c1c10bd6530e58faae9
         with:
           # renovate: datasource=docker depName=mariadb
           db-image: mariadb:11.4@sha256:4f1d8d202fcf7bcb3902f63af09f9c1a050c2922a89652f22abaec0d4f015e83
-          db-gate-evidence: ${{ inputs['db-gate-evidence'] }}
           database-url: ${{ steps.pinned.outputs['database-url'] }}
           bun: ${{ steps.pinned.outputs.bun }}
           path: ${{ steps.pinned.outputs.path }}
@@ -247,8 +329,69 @@ jobs:
       # migrations produced, so it needs the schema that step builds rather than
       # one written by hand. Its own pin, because an action and the workflow
       # pinning it are two commits — CLAUDE.md, "Releasing an action".
-      - uses: gokayo43/dev-config-mariadb/.github/actions/db-datetime@2ab691306b2c02f0017926ee5b3491705d890999
+      - uses: gokayo43/dev-config-mariadb/.github/actions/db-datetime@3d650f2a40dfc609bddb5c1c10bd6530e58faae9
         with:
           datetime-allowlist: ${{ inputs['datetime-allowlist'] }}
           database-url: ${{ steps.pinned.outputs['database-url'] }}
           bun: ${{ steps.pinned.outputs.bun }}
+
+      # Migrations applying says nothing about whether an app can run against
+      # what they built, a route table answering says nothing about whether any
+      # answer was right, and neither says anything about what the surface does
+      # under load. A step of this job rather than a job of its own, for the
+      # reason CONTEXT.md gives at "A database job". docs/gates/db-serving.md is
+      # the page.
+      - uses: gokayo43/dev-config-mariadb/.github/actions/db-serving@3d650f2a40dfc609bddb5c1c10bd6530e58faae9
+        with:
+          start-command: ${{ inputs['start-command'] }}
+          health-url: ${{ inputs['health-url'] }}
+          probe-command: ${{ inputs['probe-command'] }}
+          probe-timeout: ${{ inputs['probe-timeout'] }}
+          capacity-script: ${{ inputs['capacity-script'] }}
+          capacity-path: ${{ inputs['capacity-path'] }}
+          route-allowlist: ${{ inputs['route-allowlist'] }}
+          bun: ${{ steps.pinned.outputs.bun }}
+          path: ${{ steps.pinned.outputs.path }}
+
+      # Everything the steps above wrote into the runner, which is deleted with
+      # the runner. The upload belongs to the job rather than to either action:
+      # one job builds one database and runs one app against it, an artifact
+      # name may be claimed once per run, and two actions publishing under the
+      # caller's one name would be the second of them failing on the duplicate.
+      #
+      # A step that failed on the way to a number is exactly when its partial
+      # evidence is worth having — the schema a run never got to compare, the
+      # summary of a ramp that died, the output of an app that never answered.
+      # Reproducing any of them by re-running with more printing is the shape of
+      # debugging every diagnostic here exists to avoid, so the files leave the
+      # run whatever happened to it.
+      #
+      # `always()` and not `!cancelled()`, which is the same sentence with a
+      # hole in it: the runner sets the job's status to Cancelled when the JOB
+      # is cancelled — and a job that hit its own `timeout-minutes` above is
+      # cancelled — so `cancelled()` is true and the step is skipped. That is
+      # precisely the run whose evidence is worth most: an app that never came
+      # up, or a ramp that wedged, spending the budget and then losing
+      # everything it wrote. `always()` is the literal true this needs.
+      #
+      # server.log is copied while the app still holds it open, which is not a
+      # race to fix: the ramp needs the process alive, so there is no moment
+      # where the file is finished and the run is not. Read its tail as possibly
+      # torn. The boot step's own annotation, not this file, is what says an app
+      # failed to start.
+      - name: Publish what this job built, measured and read
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          # The one place this name is defaulted, so that a caller passing an
+          # empty string through is the same as a caller not asking for one.
+          name: ${{ inputs['db-gate-evidence'] || 'db-gate-evidence' }}
+          path: |
+            ${{ runner.temp }}/replay-from-empty.schema
+            ${{ runner.temp }}/replay-again.schema
+            ${{ runner.temp }}/server.log
+            ${{ runner.temp }}/capacity.json
+            ${{ runner.temp }}/route-log-before.json
+            ${{ runner.temp }}/route-log-after.json
+          # Each of these is written by a step that may not have been reached.
+          if-no-files-found: ignore

@@ -1,9 +1,11 @@
 # The replay gate
 
-`database: true` adds the `replay` job: an empty MariaDB — plus a Redis, for the
-repos whose migrator imports an environment module that wants one — the
-consumer's own `bun run db:migrate` onto it, then the same command again, and
-the two schemas compared.
+`database: true` adds the `database` job, and these are its first steps: an
+empty MariaDB — plus a Redis, for the repos whose migrator imports an
+environment module that wants one — the consumer's own `bun run db:migrate` onto
+it, then the same command again, and the two schemas compared. What the same job
+does afterwards, with the database these steps built, is
+[db-serving.md](db-serving.md).
 
 An empty database is the one state no developer machine is ever in, and it is
 the state every deploy to a new box and every restore drill starts from. A
@@ -137,10 +139,14 @@ passes, and the pass reads exactly like a history that rebuilds.
 ## Evidence
 
 Both schemas leave the run in the artifact `db-gate-evidence` names, defaulting
-to `db-replay-evidence`. Each is written as it is taken rather than after a
-comparison that may never happen — the dump a run never got to compare is
-exactly the evidence somebody wants — so a refusal on the second replay ships
-both, and a refusal on the first ships neither.
+to `db-gate-evidence`, alongside everything the steps after this one left behind
+— [db-serving.md](db-serving.md) lists those and says why one job leaves one
+artifact.
+
+Each schema is written as it is taken rather than after a comparison that may
+never happen — the dump a run never got to compare is exactly the evidence
+somebody wants — so a refusal on the second replay ships both, and a refusal on
+the first ships neither.
 
 They are named `.schema` rather than `.sql` for what they are: what the step
 compared, with each table's counter taken out. Feeding one back would build a
