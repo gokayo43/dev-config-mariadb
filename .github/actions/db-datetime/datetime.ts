@@ -15,10 +15,7 @@ import { databaseIn, objectsIn, rowsFrom, textIn } from "../db-replay/database.t
  * or on the other side of a DST boundary, is a different instant, and nothing
  * fails until it does.
  *
- * So this gate is dev-config's timestamptz gate with the types swapped, and the
- * swap is the whole reason the input is not called `timestamp-allowlist`: an
- * allowlist named after the type that is FINE here would be read backwards by
- * every MariaDB developer who met it.
+ * So this gate is dev-config's timestamptz gate with the types swapped.
  */
 
 /** A column, as `information_schema.columns` names it. */
@@ -56,11 +53,10 @@ const WALL_CLOCK = "datetime";
  *
  * The filter is not tidiness. A Postgres connection can see one database, so
  * dev-config's gate grades every schema in it and subtracts the catalogue's
- * own; a MySQL-family connection sees every database on the server, and on a
- * stock server of the pinned image `information_schema`, `mysql` and `sys`
- * carry 36 `DATETIME` columns between them (probed). Unfiltered, this gate
- * would open with three dozen refusals for columns no consumer's migrations
- * wrote and no consumer can convert.
+ * own; a MySQL-family connection sees every database on the server, and the
+ * server's own `information_schema`, `mysql` and `sys` carry `DATETIME` columns
+ * no consumer's migrations wrote and no consumer can convert —
+ * docs/gates/db-datetime.md counts them.
  *
  * It is also what makes `table.column` an unambiguous key: MySQL and MariaDB
  * have no schemas within a database — the schema IS the database — so once the

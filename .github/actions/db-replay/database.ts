@@ -86,7 +86,7 @@ export function textIn(row: Foreign, key: string, where: string): string {
 
 /**
  * One query, one connection, and the rows it answered — this repo's own, over
- * the two copies above.
+ * `rowsIn` above.
  *
  * A gate here reads a catalogue exactly once and decides on the whole of the
  * answer: there is no cursor, no page and no second read, so a query that came

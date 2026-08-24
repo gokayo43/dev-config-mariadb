@@ -71,7 +71,7 @@ that has been improved says so at the line that improved it.
   dev-config does not declare, the call carries exactly one literal and it is
   `database: false`, only one job calls that workflow at all, what the README
   tables and what it says is refused cover dev-config's input surface exactly,
-  the four carriers of the dev-config pin agree, the action pin names a commit
+  the four carriers of the dev-config pin agree, every action pin names a commit
   this repo carries, and the server image is written once as far as a reader is
   concerned. `refusals.test.ts` runs the wrapper's own `run:` block — extracted
   from the shipped YAML rather than transcribed — over the whole truth table of
@@ -115,11 +115,11 @@ repo's actions by full path and SHA, and an action and the workflow pinning it
 are two commits. dev-config carries the same shape; `check.yml` there is v0.50.1
 pinning actions at v0.50.0.
 
-Two consequences, both live now that `#2` has shipped one:
+Two consequences, both live from the first action this repo shipped:
 
 - **A change to an action is two commits**, the second re-pinning the first.
-  `tests/wrapper-inputs.test.ts` fails when the pin names a commit this repo
-  does not carry, which is the loud half.
+  `tests/wrapper-inputs.test.ts` fails when a pin names a commit this repo does
+  not carry, which is the loud half.
 - **The pinned commit has to survive.** A squash merge orphans it, and an
   orphaned pin is an action GitHub cannot fetch — a database job that fails for
   every consumer at once. Tagging the release is what keeps it reachable, and

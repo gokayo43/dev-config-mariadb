@@ -32,8 +32,7 @@ const INSTALLED = "node_modules/@gokayo43/dev-config/.github/workflows/check.yml
  * one call either way. This set is the exception, and it is small on purpose:
  * an input earns a place in it only when the fact it names is MariaDB's own and
  * borrowing their spelling would name the wrong thing. `datetime-allowlist` is
- * the first — their gate of that shape waives Postgres `timestamp without time
- * zone`, and here TIMESTAMP is the type that is FINE.
+ * the first, and docs/gates/db-datetime.md is why.
  *
  * Written out rather than derived, so that adding one is a decision somebody
  * made rather than a name that stopped matching.
@@ -338,17 +337,17 @@ test("this repo is gated by, and installs, the dev-config it hands its consumers
 });
 
 /**
- * The action this repo ships, reached by full path and SHA because a relative
- * `uses:` inside a called workflow resolves against the CALLER's checkout. So
- * the pin names a commit of this repo, and a commit it does not carry is an
- * action GitHub cannot fetch — a database job that fails for every consumer at
- * once, over a value no consumer wrote.
+ * The actions this repo ships, each reached by full path and SHA because a
+ * relative `uses:` inside a called workflow resolves against the CALLER's
+ * checkout. So a pin names a commit of this repo, and a commit it does not
+ * carry is an action GitHub cannot fetch — a database job that fails for every
+ * consumer at once, over a value no consumer wrote.
  *
- * Reachability rather than freshness. Whether the pinned commit is the newest
- * one carrying that action is a release decision; whether it exists at all is
+ * Reachability rather than freshness. Whether a pinned commit is the newest one
+ * carrying that action is a release decision; whether it exists at all is
  * arithmetic, and it is the half that is silently wrong after a squash.
  */
-test("the action the wrapper pins is a commit this repo carries", async () => {
+test("every action the wrapper pins is a commit this repo carries", async () => {
   const pins = [...stringsIn(wrapper.document)].filter((text) => OWN_ACTION.test(text));
   expect(pins).not.toEqual([]);
   for (const pin of pins) {

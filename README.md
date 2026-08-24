@@ -89,12 +89,10 @@ the database jobs below, and `db-gate-evidence` names the artifact they leave
 behind. A consumer that moves between the two workflows writes one call either
 way.
 
-`datetime-allowlist` is the one input dev-config has no name for. Their gate of
-that shape waives Postgres columns that are `timestamp without time zone`; here
-`TIMESTAMP` is the type that is fine and `DATETIME` is the ambiguous one, so
-borrowing their `timestamp-allowlist` would name the safe type to every MariaDB
-developer who read it — that input stays refused below, and
-[docs/gates/db-datetime.md](docs/gates/db-datetime.md) is what this one waives.
+`datetime-allowlist` is the one input dev-config has no name for, and their
+`timestamp-allowlist` stays refused below rather than standing in for it.
+[docs/gates/db-datetime.md](docs/gates/db-datetime.md) is what this one waives
+and why it is spelled this way.
 
 `tests/wrapper-inputs.test.ts` is what keeps every list on this page honest: it
 reads the dev-config this repo installs — the same commit the workflows call —

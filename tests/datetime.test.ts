@@ -90,6 +90,24 @@ test("an entry with no reason fails the run and still exempts its column", async
 }, 60_000);
 
 /**
+ * The other half of that rule, and the only case that reaches it: an entry with
+ * no reason whose subject is not a live DATETIME column either. The most
+ * plausible wrong implementation is a dead-entry check that asks only whether
+ * the subject is still graded — and then this one entry earns two diagnostics,
+ * sending its author to write a reason AND to hunt for a column, over one
+ * mistake that is entirely the first.
+ */
+test("an entry with no reason is asked nothing about the column it names", async () => {
+  const url = await built("create table `shop` (`id` int primary key, `opens_at` timestamp null)");
+
+  const verdict = await datetimeGate(url, allowing("shop.gone"));
+
+  expect(verdict.problems).toHaveLength(1);
+  expect(verdict.problems[0]).toContain("waives shop.gone without saying why");
+  expect(verdict.problems[0]).not.toContain("has no column called");
+}, 60_000);
+
+/**
  * The first way a waiver dies, and the diagnostic that has to say which: the
  * column is still there and has been converted, so the entry goes. A gate that
  * graded only the wall-clock columns could not tell this from the case below,
@@ -188,11 +206,28 @@ test("a table and column whose names hold spaces can be waived", async () => {
 }, 60_000);
 
 /**
+ * Which is exactly why the subject is trimmed of what surrounds the separator
+ * rather than taken raw. An entry is a line of a YAML block a person typed, and
+ * a second space before the `--` is the most ordinary thing to type; the wrong
+ * implementation compares `shop.opens_at ` against the catalogue, waives
+ * nothing, and refuses the entry as naming a column whose name differs from a
+ * real one by a character nobody can see.
+ */
+test("an entry padded around its separator waives the column it names", async () => {
+  const url = await built("create table `shop` (`id` int primary key, `opens_at` datetime)");
+
+  const verdict = await datetimeGate(url, allowing(`shop.opens_at ${REASONED}`));
+
+  expect(verdict.problems).toEqual([]);
+  expect(verdict.note).toContain("1 DATETIME column is allowlisted");
+}, 60_000);
+
+/**
  * Only the graded database. A MySQL-family connection can see every database on
  * the server — and the server's own `mysql`, `sys` and `information_schema`
- * carry three dozen DATETIME columns between them — so a gate that forgot the
- * filter would open with refusals for columns no migration wrote and no
- * consumer can convert.
+ * carry DATETIME columns of their own — so a gate that forgot the filter would
+ * open with refusals for columns no migration wrote and no consumer can
+ * convert.
  */
 test("a DATETIME column in another database on the same server is not graded", async () => {
   const neighbour = await built("create table `event` (`at` datetime)");
@@ -234,4 +269,25 @@ test("a database whose schema is one routine has read nothing to grade, and pass
 
   expect(verdict.problems).toEqual([]);
   expect(verdict.note).toContain("holds no DATETIME column");
+}, 60_000);
+
+/**
+ * The journal is a table like any other here, and that is worth a case because
+ * the gate beside this one does the opposite: `db-replay` subtracts `JOURNAL`
+ * from what it compares, since a migrator's bookkeeping is not schema. Carrying
+ * that subtraction across is the most plausible wrong implementation of this
+ * gate — and it would wave through exactly the DATETIME a migrator writes its
+ * own clock into, which is a column no consumer's migrations can convert and
+ * every consumer would rather have named.
+ */
+test("the migrator's own journal is graded like any other table", async () => {
+  const url = await built(
+    "create table `__drizzle_migrations` (`id` int primary key, `created_at` datetime)",
+  );
+
+  const verdict = await datetimeGate(url, allowing());
+
+  expect(verdict.problems).toEqual([
+    expect.stringContaining("__drizzle_migrations.created_at is a DATETIME"),
+  ]);
 }, 60_000);

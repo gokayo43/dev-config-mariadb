@@ -43,13 +43,17 @@ with:
     contract.expires_on -- a calendar deadline the customer reads in local time
 ```
 
-**A bare `table.column`, and that is a deliberate difference from dev-config.**
-Their `timestamp-allowlist` keys `schema.table.column`, because a Postgres
-database holds schemas and `app.events.occurred_at` and
-`public.events.occurred_at` are two different columns. MySQL and MariaDB have no
-such layer — the schema **is** the database — so once this gate has fixed the
-database, `table.column` names exactly one column and a third part would name
-nothing.
+**The name is `datetime-allowlist`, not dev-config's `timestamp-allowlist`.**
+Each names the ambiguous type of its own server, and here that spelling would
+name the safe one — so the wrapper refuses `timestamp-allowlist` rather than let
+a MariaDB reader meet the rule backwards.
+
+**A bare `table.column`, and that is the other deliberate difference.** Their
+`timestamp-allowlist` keys `schema.table.column`, because a Postgres database
+holds schemas and `app.events.occurred_at` and `public.events.occurred_at` are
+two different columns. MySQL and MariaDB have no such layer — the schema **is**
+the database — so once this gate has fixed the database, `table.column` names
+exactly one column and a third part would name nothing.
 
 Fixing the database is not tidiness either. A Postgres connection can see one
 database; a MySQL-family connection can see every database on the server, and on
@@ -155,6 +159,10 @@ gets trusted for things it never checked.
   identifier; the allowlist splits an entry at the first `--`, so such a
   column cannot be waived and its entry would be refused as naming nothing.
   Renaming the column is the fix, and no consumer has one.
+- **A column whose name contains a newline.** Probed: `` `a\nb` `` is a legal
+  identifier and the catalogue reports it as one. Entries are one per line, so
+  an entry for it is read as two subjects nobody wrote — same shape as the
+  limit above, and the same fix.
 - **A table whose name contains a dot.** `` `a.b` ``.`c` and `a`.`` `b.c` ``
   both spell `a.b.c`, so one entry waives both. Same shape as dev-config's key,
   which a schema, table or column containing a dot collides in the same way.

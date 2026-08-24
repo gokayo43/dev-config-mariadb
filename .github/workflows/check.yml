@@ -15,9 +15,9 @@ on:
       # No descriptions on a pass-through, deliberately. dev-config declares
       # every one of these and says what it does, including the conditions under
       # which it refuses one; a second copy of that prose is a copy that drifts,
-      # and `description` is optional on a workflow_call input. The two inputs
-      # that carry one say what dev-config cannot: a fact about calling this
-      # workflow instead of that one, and a fact about a job of this repo's own.
+      # and `description` is optional on a workflow_call input. The ones that
+      # carry one say what dev-config cannot: a fact about calling this workflow
+      # instead of that one, or a fact about a job of this repo's own.
       build:
         type: boolean
         default: false
@@ -66,9 +66,8 @@ on:
           The columns of the migrated database whose value really is a
           wall-clock reading rather than an instant, as `table.column -- why`
           entries, one per line. An input of this repo's own, and the one
-          dev-config has no name for at all: its gate of this shape is about
-          Postgres's `timestamp without time zone`, and naming this one
-          `timestamp-allowlist` would name the MariaDB type that is fine.
+          dev-config has no name for at all — docs/gates/db-datetime.md is what
+          it waives and why it is spelled this way.
         type: string
         default: ""
 
@@ -120,11 +119,13 @@ jobs:
             echo "::error::$1"
             wrong=1
           }
-          if [ "$DATABASE" != true ] && [ -n "$DB_GATE_EVIDENCE" ]; then
-            refuse "db-gate-evidence needs database: true — it names the artifact the replay job uploads, and this call leaves that job off"
-          fi
-          if [ "$DATABASE" != true ] && [ -n "$DATETIME_ALLOWLIST" ]; then
-            refuse "datetime-allowlist needs database: true — it waives columns of the database the MariaDB jobs build, and this call leaves those jobs off"
+          if [ "$DATABASE" != true ]; then
+            if [ -n "$DB_GATE_EVIDENCE" ]; then
+              refuse "db-gate-evidence needs database: true — it names the artifact the replay job uploads, and this call leaves that job off"
+            fi
+            if [ -n "$DATETIME_ALLOWLIST" ]; then
+              refuse "datetime-allowlist needs database: true — it waives columns the replay job's DATETIME step grades, and this call leaves that job off"
+            fi
           fi
           exit "$wrong"
 

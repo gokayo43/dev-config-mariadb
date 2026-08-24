@@ -101,20 +101,20 @@ test("a call that asks for the job and lets the artifact name default passes", a
 });
 
 /**
- * The same rule for the second input aimed at these jobs, and it is a rule
- * rather than a habit: an allowlist waiving columns of a database no job of
- * this call builds is a waiver nothing will ever read, and a caller who wrote
- * one is owed the news rather than the silence.
+ * The same rule for the second input aimed at that job, and it is a rule rather
+ * than a habit: an allowlist waiving columns of a database no job of this call
+ * builds is a waiver nothing will ever read, and a caller who wrote one is owed
+ * the news rather than the silence.
  */
-test("the DATETIME allowlist is refused only when the jobs whose columns it waives are off", async () => {
+test("the DATETIME allowlist is refused only when the step that reads it is off", async () => {
   const refused = await ran({ database: "false", allowlist: "shop.opens_at -- the shop's clock" });
 
   expect(refused.status).toBe(1);
   expect(refused.output).toContain("::error::datetime-allowlist needs database: true");
-  expect(refused.output).toContain("waives columns of the database the MariaDB jobs build");
+  expect(refused.output).toContain("waives columns the replay job's DATETIME step grades");
 });
 
-test("asking for the jobs and waiving a column together is what the input is for", async () => {
+test("asking for the job and waiving a column together is what the input is for", async () => {
   const allowed = await ran({ database: "true", allowlist: "shop.opens_at -- the shop's clock" });
 
   expect(allowed.status).toBe(0);
