@@ -1,0 +1,262 @@
+import { SQL } from "bun";
+
+import { type Foreign, isForeign, isList, kindOf, textAt } from "../_lib/foreign.ts";
+
+/**
+ * Not a gate. What a gate here needs a MariaDB for: what the server says it
+ * holds, how the repo's own migrator is run against it, how a schema is read
+ * back as text, and the single derivation of "these two came out the same".
+ *
+ * One derivation of "the same" rather than one per gate, because the replay,
+ * the upgrade path and the integration lane all ask that question of two
+ * schemas, and two answers to it would leave nobody able to say which was
+ * right the day they disagreed.
+ */
+
+/** The database a URL names, for the tool that takes one and for the diagnostics. */
+export function databaseIn(url: string): string {
+  return decodeURIComponent(new URL(url).pathname.replace(/^\//u, ""));
+}
+
+/**
+ * The rows a query answered, as objects a reader can say something true about.
+ *
+ * `Bun.SQL` answers `any`: a driver cannot know what a string of SQL returns.
+ * So a call site that goes straight to a field is asserting the shape, and the
+ * assertion is the only thing between a renamed column and a `TypeError` three
+ * frames from the query. The answer is refused here instead, where the SQL that
+ * produced it is still in hand to name.
+ */
+function rowsIn(answered: unknown, query: string): readonly Foreign[] {
+  if (!isList(answered)) {
+    throw new Error(`the query answered ${kindOf(answered)} rather than rows — ${query}`);
+  }
+  return answered.map((row, at) => {
+    if (!isForeign(row))
+      throw new Error(`row ${at} is ${kindOf(row)} rather than a row — ${query}`);
+    return row;
+  });
+}
+
+/**
+ * The name drizzle's MySQL migrator keeps its journal under, and where it keeps
+ * it: a table of that name **in the database being migrated**, with no schema
+ * qualifier. Its Postgres migrator puts the same table in a schema of its own,
+ * so the two spellings are not interchangeable and a reader who knows the
+ * Postgres one would look in the wrong place.
+ *
+ * It is named here because `objectsIn` below has to be able to tell the
+ * migrator's own bookkeeping from the schema a migration built: a `db:migrate`
+ * that records having applied nothing leaves exactly this table and nothing
+ * else, and counting it as schema is how a repo with no migrations at all
+ * passes a gate that replays them.
+ */
+const JOURNAL = "__drizzle_migrations";
+
+/**
+ * Everything the database holds that a schema dump would carry: its tables,
+ * views and sequences, its stored routines and its events. Asked of the server
+ * rather than read out of the dump, because the catalogue is the fact and a
+ * dump is a rendering of it — and a reader that had to find the boundaries of a
+ * `CREATE` statement in text would be a parser for a dialect nothing here owns.
+ *
+ * Routines and events are in the answer for one reason: without them a
+ * migration set that builds only a stored procedure reads as one that built
+ * nothing, and the gate refuses a repo that is fine. The dump asks for the same
+ * five, so the two agree about what a schema is.
+ */
+export async function objectsIn(url: string): Promise<string[]> {
+  const database = databaseIn(url);
+  const db = new SQL(url);
+  try {
+    const query =
+      "select table_name as name from information_schema.tables where table_schema = ?" +
+      " union all select routine_name from information_schema.routines where routine_schema = ?" +
+      " union all select event_name from information_schema.events where event_schema = ?";
+    const answered = rowsIn(await db.unsafe(query, [database, database, database]), query);
+    return answered.map((row, at) => {
+      const name = textAt(row, "name");
+      if (name === undefined) {
+        throw new Error(
+          `row ${at} of the catalogue has name as ${kindOf(row["name"])} rather than text`,
+        );
+      }
+      return name;
+    });
+  } finally {
+    await db.close();
+  }
+}
+
+/** The same, minus the migrator's own journal: what the migrations themselves built. */
+export function schemaIn(objects: readonly string[]): string[] {
+  return objects.filter((name) => name !== JOURNAL);
+}
+
+/**
+ * The repo's own migrator, which is the only one there is: nothing here writes
+ * SQL. Its output is the developer's — the statement that would not apply, and
+ * the line it was on — so it goes to the log rather than into a diagnostic that
+ * would quote a fragment of it.
+ *
+ * `failed` is the whole diagnostic rather than a database name, because this
+ * runs more than once per gate and "the second one failed" names something the
+ * author has never heard of.
+ */
+export async function migrate(root: string, url: string, failed: string): Promise<void> {
+  const proc = Bun.spawn(["bun", "run", "db:migrate"], {
+    cwd: root,
+    env: { ...process.env, DATABASE_URL: url },
+    stdout: "inherit",
+    stderr: "inherit",
+  });
+  if ((await proc.exited) !== 0) throw new Error(failed);
+}
+
+/**
+ * The schema as the server's own client writes it.
+ *
+ * The client comes out of the image the calling job runs the server from, which
+ * is what makes them the same build rather than two versions that agree today:
+ * `mariadb-dump` renders the catalogue, and a client of another major renders a
+ * schema it half understands. Running it from the image is also the only way to
+ * have it at all without a second thing to pin — nothing on a GitHub runner
+ * ships a MariaDB client, and an apt install would be an unpinned package
+ * inside a gate whose whole point is that what it runs is pinned.
+ *
+ * `--network host` because the server is a service container of the calling
+ * job, published on the runner's loopback: the dump's container has to be in
+ * the namespace those ports are in.
+ *
+ * The password goes through the environment rather than the argument list.
+ * `MYSQL_PWD` is the name the MariaDB client reads — `MARIADB_PWD` is not one —
+ * and `--env MYSQL_PWD` with no value hands over the one this process holds, so
+ * it never reaches the command line the runner logs or another process on the
+ * box can read.
+ */
+export async function dumpOf(url: string, image: string, args: readonly string[]): Promise<string> {
+  const server = new URL(url);
+  const database = databaseIn(url);
+  const proc = Bun.spawn(
+    [
+      "docker",
+      "run",
+      "--rm",
+      "--network",
+      "host",
+      "--env",
+      "MYSQL_PWD",
+      image,
+      "mariadb-dump",
+      `--host=${server.hostname}`,
+      `--port=${server.port === "" ? "3306" : server.port}`,
+      `--user=${decodeURIComponent(server.username)}`,
+      ...args,
+      database,
+    ],
+    {
+      env: { ...process.env, MYSQL_PWD: decodeURIComponent(server.password) },
+      stdout: "pipe",
+      // Captured rather than inherited, and surfaced only where it explains
+      // something: the client warns on every run that it is not verifying the
+      // server's certificate, which is true, is the caller's decision and is
+      // not news twice a job. A dump that failed carries the whole of it into
+      // the diagnostic instead, where the reader is already looking.
+      stderr: "pipe",
+    },
+  );
+  const [stdout, stderr, status] = await Promise.all([
+    new Response(proc.stdout).text(),
+    new Response(proc.stderr).text(),
+    proc.exited,
+  ]);
+  if (status !== 0) {
+    throw new Error(
+      `mariadb-dump could not read ${database} — \`docker run ${image} mariadb-dump\` exited ${status}: ${stderr.trim()}`,
+    );
+  }
+  return stdout;
+}
+
+/**
+ * A schema as a diagnostic about it has to name it, cut into the lines it is
+ * compared in.
+ *
+ * Lines, and in the order the dump wrote them: `mariadb-dump` renders the
+ * catalogue in a fixed order, so two dumps holding the same statements in a
+ * different arrangement really are two different databases. Nothing here is
+ * sorted, which is also why a line is a safe unit — a statement spanning
+ * several of them cannot have its fragments traded with another statement's.
+ */
+export interface Dump {
+  readonly of: string;
+  readonly units: readonly string[];
+}
+
+/** How two schemas differ. There is no such thing as an empty one. */
+export interface Difference {
+  /** What the log gets: every line the two do not share, addressed to whichever has it. */
+  readonly lines: readonly string[];
+  /** What the annotation gets: the shortest true sentence about it. */
+  readonly headline: string;
+}
+
+/** How many times each line occurs, since a dump repeats `SET`s and blank lines. */
+function tally(units: readonly string[]): Map<string, number> {
+  const counts = new Map<string, number>();
+  for (const unit of units) {
+    if (unit.trim() !== "") counts.set(unit, (counts.get(unit) ?? 0) + 1);
+  }
+  return counts;
+}
+
+/**
+ * The lines `dump` carries that `other` does not, in the order they first
+ * appeared. A line carried twice on one side and once on the other is listed
+ * once, for the copy that has no partner.
+ */
+function only(dump: readonly string[], other: readonly string[]): string[] {
+  const theirs = tally(other);
+  const lines: string[] = [];
+  for (const [unit, count] of tally(dump)) {
+    for (let extra = count - (theirs.get(unit) ?? 0); extra > 0; extra--) lines.push(unit);
+  }
+  return lines;
+}
+
+/**
+ * The single derivation of "these two came out the same". `undefined` is the
+ * only way two schemas are equal, and every other answer carries both a
+ * headline and something to print — so a refusal with nothing to say for itself
+ * cannot be built, which is the one thing no gate here may produce.
+ *
+ * Joining on a newline to compare looks as though it could equate two different
+ * cuttings and cannot: both sides were cut from a dump by the same split, so
+ * two line lists that join to the same string were cut from the same string.
+ */
+export function compare(left: Dump, right: Dump): Difference | undefined {
+  if (left.units.join("\n") === right.units.join("\n")) return undefined;
+
+  const sides = [
+    { dump: left, lines: only(left.units, right.units) },
+    { dump: right, lines: only(right.units, left.units) },
+  ].filter(({ lines }) => lines.length > 0);
+
+  // Every line one holds, the other holds as often — so what differs is the
+  // arrangement: the order of the statements, or the blank lines between them.
+  // Which of the two it is, this does not know, and saying would be a guess.
+  if (sides.length === 0) {
+    const arranged = `${left.of} and ${right.of} differ, but not in which lines they hold — the same lines are in a different order`;
+    return { lines: [arranged], headline: arranged };
+  }
+
+  return {
+    lines: sides.flatMap(({ dump, lines }) => lines.map((line) => `only in ${dump.of}: ${line}`)),
+    headline: sides
+      .map(
+        ({ dump, lines }) =>
+          `${dump.of} alone has ${lines.length} line${lines.length === 1 ? "" : "s"}, first \`${lines[0]}\``,
+      )
+      .join(", "),
+  };
+}

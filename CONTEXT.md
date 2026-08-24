@@ -23,7 +23,24 @@ and the two never run in one call.
 
 **Pass-through** — an input the wrapper declares only in order to hand it to
 dev-config's `check.yml` under the same name. A pass-through has no behaviour
-here; an input that did would not be one.
+here; an input that did would not be one. The wrapper's other kind is an input
+of this repo's own: it drives a database job and reaches dev-config under no
+name at all, though it is spelled the way dev-config spells the same idea.
+
+**A replay** — one run of the consuming repo's own `db:migrate` against one
+database. The gate `#2` ships makes two of them, from empty, and its verdict is
+that the schema either side is the same.
+
+**The schema** — what `mariadb-dump` renders of a database's catalogue with no
+rows in it: tables, views and sequences, routines, events and triggers. Not the
+rows, and not the `AUTO_INCREMENT` counters, which say how many rows have been
+written rather than what may be written.
+
+**The journal** — the table a journalled migrator keeps its own record in. For
+drizzle's MySQL migrator it is `__drizzle_migrations`, in the database being
+migrated and unqualified; its Postgres migrator puts the same table in a schema
+of its own, so the two spellings are not interchangeable. It is a migrator's
+bookkeeping rather than schema, and no gate here counts it as one.
 
 **A consumer** — a repo whose `ci.yml` calls the wrapper. There are two, both
 named in `README.md`, and both are older than the fleet's Postgres decision.

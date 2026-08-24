@@ -2,5 +2,15 @@
   "$schema": "https://raw.githubusercontent.com/oxc-project/oxc/main/npm/oxlint/configuration_schema.json",
   "extends": ["./node_modules/@gokayo43/dev-config/oxlint.base.json"],
   "env": { "node": true, "es2024": true },
-  "ignorePatterns": ["node_modules/**"]
+  "ignorePatterns": ["node_modules/**"],
+  "rules": {
+    // One of the base's own rules, off here. Everything this repo grades was
+    // written somewhere else — a consuming repo's package.json, a workflow's
+    // YAML, a row a MariaDB answered with — and none of it has a schema this
+    // repo could hold. The rule exists to push parsing to the boundary; here
+    // the boundary is the product, and `.github/actions/_lib/foreign.ts` is the
+    // one module it is done in. Every `unknown` in the tree is a parameter of
+    // that module or of a reader going straight through it.
+    "anti-slop/no-unknown-parameters": "off"
+  }
 }

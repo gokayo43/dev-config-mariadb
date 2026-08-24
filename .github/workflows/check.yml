@@ -5,18 +5,19 @@ name: Check
 #
 # Everything static is dev-config's, unchanged: this workflow calls that one
 # rather than restating any of it, so a gate lands here when the pin below moves
-# and never because a copy drifted. `database: false` is not a preference —
-# dev-config's database job is Postgres, and the MariaDB jobs this repo adds are
-# what a consumer gets instead.
+# and never because a copy drifted. The `database: false` in that call is not a
+# preference — dev-config's database job is Postgres, and the MariaDB jobs this
+# workflow adds are what a consumer gets instead. This workflow's own `database`
+# input turns those on and never reaches that call.
 on:
   workflow_call:
     inputs:
-      # No descriptions here, deliberately. dev-config declares every one of
-      # these and says what it does, including the conditions under which it
-      # refuses one; a second copy of that prose is a copy that drifts, and
-      # `description` is optional on a workflow_call input. The one exception
-      # below states what dev-config cannot: a fact about calling this workflow
-      # instead of that one.
+      # No descriptions on a pass-through, deliberately. dev-config declares
+      # every one of these and says what it does, including the conditions under
+      # which it refuses one; a second copy of that prose is a copy that drifts,
+      # and `description` is optional on a workflow_call input. The two inputs
+      # that carry one say what dev-config cannot: a fact about calling this
+      # workflow instead of that one, and a fact about a job of this repo's own.
       build:
         type: boolean
         default: false
@@ -49,6 +50,17 @@ on:
       test-suite-evidence:
         type: string
         default: ""
+      database:
+        description: >-
+          Replay the repo's own migrations onto an empty MariaDB, twice, and
+          compare the schema either side. This is a job of this repo's own and
+          this input never reaches dev-config's check.yml, whose job of that
+          name is Postgres.
+        type: boolean
+        default: false
+      db-gate-evidence:
+        type: string
+        default: ""
 
 permissions:
   contents: read
@@ -66,9 +78,116 @@ jobs:
       stack-allowlist: ${{ inputs['stack-allowlist'] }}
       test-network: ${{ inputs['test-network'] }}
       test-suite-evidence: ${{ inputs['test-suite-evidence'] }}
-      # Every other input that workflow declares is neither declared above nor
-      # passed on: each is aimed at the Postgres database job or at the app that
-      # job boots, and what will answer them here is a MariaDB job of this
-      # repo's own. README.md names them; the suite holds that list to what
+      # A literal, always. Every other value in this call is a caller's input
+      # handed on; this one is the workflow's own answer, and the input of the
+      # same name above decides a job here rather than that one. README.md names
+      # the inputs that reach neither, and the suite holds that list to what
       # dev-config declares at the pin above.
       database: false
+
+  # Every input aimed at the replay job is a request that job would otherwise
+  # never see, and a gate nobody notices is off is the worst kind — so a call
+  # that asks for one without asking for the job is refused rather than ignored.
+  #
+  # A job rather than a step, because the only other job that always runs here
+  # is a `uses:` and a called workflow takes no steps of a caller's. It has no
+  # `if:` for the reason dev-config's own guard has none: a condition restating
+  # what the body tests is a second statement of one rule, and the half that
+  # gets forgotten is the guard. The body is the rule.
+  refusals:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - env:
+          DATABASE: ${{ inputs.database }}
+          DB_GATE_EVIDENCE: ${{ inputs['db-gate-evidence'] }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          wrong=0
+          refuse() {
+            echo "::error::$1"
+            wrong=1
+          }
+          if [ "$DATABASE" != true ] && [ -n "$DB_GATE_EVIDENCE" ]; then
+            refuse "db-gate-evidence needs database: true — it names the artifact the replay job uploads, and this call leaves that job off"
+          fi
+          exit "$wrong"
+
+  replay:
+    if: inputs.database
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    # Empty on every run, which is the one state no developer database is ever
+    # in. Pinned by digest for the same reason an action is, with the tag kept
+    # inline: that is the form Renovate's docker datasource maintains.
+    #
+    # 11.4 because that is what the server this gate is written for runs —
+    # nfp-elysia's, probed at 11.4.12-MariaDB. The other repo named in README.md
+    # runs MySQL 8.0.32 rather than MariaDB at all, which is a lane this
+    # workflow does not have and issue #9 is where it is decided; until then a
+    # consumer on MySQL is refused by this image rather than quietly graded
+    # against another server's idea of a schema.
+    #
+    # Redis is started with it, unconditionally: a repo whose migrator imports
+    # its own environment module gets that module's Redis check on the way in,
+    # and an idle container costs a couple of seconds.
+    services:
+      mariadb:
+        image: mariadb:11.4@sha256:4f1d8d202fcf7bcb3902f63af09f9c1a050c2922a89652f22abaec0d4f015e83
+        env:
+          MARIADB_ROOT_PASSWORD: mariadb
+          MARIADB_DATABASE: app
+        ports:
+          - 3306:3306
+        # Over TCP on purpose. The image's entrypoint runs a temporary server
+        # with networking off while it initialises, so a socket ping answers
+        # while the database the job is about to migrate does not exist yet.
+        options: >-
+          --health-cmd "mariadb-admin --protocol=tcp -h 127.0.0.1 -uroot -pmariadb ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 30
+      redis:
+        image: redis:7-alpine@sha256:ff02b58f971e7d7d156a1267e283fcbbeee91773b6aa36c49dac28ecfe28eadf
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 30
+
+    # 127.0.0.1 rather than localhost: a MySQL-family client reads that name as
+    # an instruction to use a unix socket, and the server is a container.
+    env:
+      DATABASE_URL: mysql://root:mariadb@127.0.0.1:3306/app
+      REDIS_URL: redis://127.0.0.1:6379
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Nothing in this job pushes, and it installs and runs the repo's own
+          # dependencies in the same workspace the token would sit in.
+          persist-credentials: false
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+
+      - run: bun install --frozen-lockfile
+
+      # By full path and SHA rather than `./`: inside a called workflow a
+      # relative `uses:` resolves against the CALLER's checkout, where this
+      # repo's actions are not. The consequence is that the action and the
+      # workflow pinning it are two commits — this repo's release contract, in
+      # CLAUDE.md under "Releasing an action".
+      #
+      # The image is written twice in this file, in the service above and here,
+      # because GitHub gives a service image no way to read a value declared
+      # anywhere else. tests/wrapper-inputs.test.ts is what holds the two to one
+      # digest.
+      - uses: gokayo43/dev-config-mariadb/.github/actions/db-replay@0000000000000000000000000000000000000000
+        with:
+          # renovate: datasource=docker depName=mariadb
+          db-image: mariadb:11.4@sha256:4f1d8d202fcf7bcb3902f63af09f9c1a050c2922a89652f22abaec0d4f015e83
+          db-gate-evidence: ${{ inputs['db-gate-evidence'] }}
