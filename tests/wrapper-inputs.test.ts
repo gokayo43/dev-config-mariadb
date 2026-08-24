@@ -1,6 +1,13 @@
 import { expect, test } from "bun:test";
 
+import { isForeign, isList, mapAt, textAt } from "../.github/actions/_lib/foreign.ts";
+
+import { dbImage, root, WRAPPER } from "./workflow.ts";
+
 const CHECK_CALL = /^gokayo43\/dev-config\/\.github\/workflows\/check\.yml@([0-9a-f]{40})$/;
+
+/** This repo's own action, which the wrapper reaches the only way a called workflow can. */
+const OWN_ACTION = /^gokayo43\/dev-config-mariadb\/\.github\/actions\/[\w-]+@([0-9a-f]{40})$/;
 
 /** `${{ inputs.build }}` and `${{ inputs['test-network'] }}` are one reference written two ways. */
 const FORWARD = /^\$\{\{\s*inputs(?:\.([\w-]+)|\[(['"])([^'"]+)\2\])\s*\}\}$/;
@@ -23,6 +30,11 @@ type Argument = string | boolean;
  * A workflow as the questions below read one: the keys they name and no others,
  * each optional because a file that has stopped carrying one is exactly what
  * they are here to catch.
+ *
+ * It is a view of the parse rather than the parse itself — see `read` below.
+ * Two questions here need the document as it actually came out of the YAML: an
+ * input can be mentioned anywhere in a job, and an image sits under keys this
+ * type does not name.
  */
 interface Workflow {
   readonly on?: {
@@ -37,15 +49,19 @@ interface Workflow {
   >;
 }
 
-const root = `${import.meta.dir}/..`;
-
-function parse(text: string): Workflow {
-  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- the interface above is this suite's schema for the three workflows it reads; what the assertion claims is what every test below asserts
-  return Bun.YAML.parse(text) as Workflow;
+/** One file, parsed once, read two ways: as the shape below, and as whatever it is. */
+interface Read {
+  readonly typed: Workflow;
+  readonly document: unknown;
 }
 
-async function workflow(path: string): Promise<Workflow> {
-  return parse(await Bun.file(`${root}/${path}`).text());
+function readAs(document: unknown): Read {
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- the interface above is this suite's schema for the workflows it reads; what the assertion claims is what every test below asserts
+  return { typed: document as Workflow, document };
+}
+
+async function workflow(path: string): Promise<Read> {
+  return readAs(Bun.YAML.parse(await Bun.file(`${root}/${path}`).text()));
 }
 
 /**
@@ -58,14 +74,14 @@ async function workflow(path: string): Promise<Workflow> {
  * fires, dev-config is being installed packed and this suite needs another way
  * to read what it declares.
  */
-async function installed(): Promise<Workflow> {
+async function installed(): Promise<Read> {
   const file = Bun.file(`${root}/${INSTALLED}`);
   if (!(await file.exists())) {
     throw new Error(
       `${INSTALLED} is not there — this suite reads dev-config's input surface out of the install, which carries its workflows only because a github: dependency is a full checkout rather than a packed tarball. Run bun install; if the file is still missing, dev-config is packed now and this suite has to read that surface from somewhere else.`,
     );
   }
-  return parse(await file.text());
+  return readAs(Bun.YAML.parse(await file.text()));
 }
 
 /** A group the pattern that matched has to have captured, since every branch of it captures one. */
@@ -74,10 +90,10 @@ function captured(value: string | undefined, what: string): string {
   return value;
 }
 
-function inputsOf(
-  read: Workflow,
-): Readonly<Record<string, { readonly type?: string; readonly default?: Argument }>> {
-  return read.on?.workflow_call?.inputs ?? {};
+function inputsOf({
+  typed,
+}: Read): Readonly<Record<string, { readonly type?: string; readonly default?: Argument }>> {
+  return typed.on?.workflow_call?.inputs ?? {};
 }
 
 /**
@@ -87,10 +103,10 @@ function inputsOf(
  * leaving it off, and reading only the first is how nobody would notice.
  */
 function call(
-  read: Workflow,
+  { typed }: Read,
   path: string,
 ): { readonly uses: string; readonly with: Readonly<Record<string, Argument>> } {
-  const jobs = Object.values(read.jobs ?? {}).filter(
+  const jobs = Object.values(typed.jobs ?? {}).filter(
     ({ uses }) => uses !== undefined && CHECK_CALL.test(uses),
   );
   const [job] = jobs;
@@ -107,31 +123,98 @@ function forwards(value: Argument): value is string {
   return typeof value === "string" && FORWARD.test(value);
 }
 
-const alphabetically = (a: string, b: string): number => a.localeCompare(b);
-
-const wrapper = await workflow(".github/workflows/check.yml");
-const ci = await workflow(".github/workflows/ci.yml");
-const upstream = await installed();
-
-test("every input the wrapper declares reaches dev-config's check.yml under its own name", () => {
-  const passes = Object.entries(call(wrapper, "check.yml").with);
-  const passed = passes.flatMap(([key, value]) => {
+/** The inputs the call hands on, each with the name it was read under. */
+function forwarded(read: Read, path: string): (readonly [string, string])[] {
+  return Object.entries(call(read, path).with).flatMap(([key, value]) => {
     if (!forwards(value)) return [];
     const forward = FORWARD.exec(value);
     return [[key, captured(forward?.[1] ?? forward?.[3], "FORWARD")] as const];
   });
-  // Three failures, and a run shows none of them: an input declared and never
-  // handed on is a setting a consumer wrote that nothing reads, one handed on
-  // under a neighbour's name is that silence with a wrong answer beside it, and
-  // a key dev-config does not declare is a whole argument it ignores.
-  expect(passed.map(([key]) => key).toSorted(alphabetically)).toEqual(
-    Object.keys(inputsOf(wrapper)).toSorted(alphabetically),
+}
+
+/**
+ * Every string in a document, which is where an expression can be.
+ *
+ * A reference to an input is not confined to a `with:` value: `if: inputs.x`
+ * carries one bare, an `env:` maps one into a step's shell, and a job's
+ * `services` could hold one too. Reading the strings rather than a fixed set of
+ * keys is what makes "is this input read by anything" a question about the
+ * file instead of about a list somebody remembered to update.
+ */
+function stringsIn(document: unknown): string[] {
+  if (typeof document === "string") return [document];
+  if (isList(document)) return document.flatMap((node) => stringsIn(node));
+  if (!isForeign(document)) return [];
+  return Object.values(document).flatMap((node: unknown) => stringsIn(node));
+}
+
+/** Whether anything in `document` reads the named input, in either spelling an expression has. */
+function reads(document: unknown, name: string): boolean {
+  const reference = new RegExp(`inputs(?:\\.${name}(?![\\w-])|\\[(['"])${name}\\1\\])`, "u");
+  return stringsIn(document).some((text) => reference.test(text));
+}
+
+/** Every job whose work is this repo's own, which is every job that is not the call into dev-config. */
+function ownJobs({ document }: Read): unknown[] {
+  return Object.values(mapAt(document, "jobs")).filter((job) => {
+    const uses = textAt(job, "uses");
+    return uses === undefined || !CHECK_CALL.test(uses);
+  });
+}
+
+/**
+ * Every image a job of this workflow declares as a service — read at the one
+ * depth a service image sits at, never walked. A walk would take any string
+ * that looks like a reference with it, and the value this is compared against
+ * is itself one: the test would then be asking whether a value equals itself.
+ */
+function serviceImages({ document }: Read): string[] {
+  return Object.values(mapAt(document, "jobs")).flatMap((job) =>
+    Object.values(mapAt(job, "services")).flatMap((service) => {
+      const image = textAt(service, "image");
+      return image === undefined ? [] : [image];
+    }),
   );
+}
+
+const alphabetically = (a: string, b: string): number => a.localeCompare(b);
+
+const wrapper = await workflow(WRAPPER);
+const ci = await workflow(".github/workflows/ci.yml");
+const upstream = await installed();
+
+test("every input the wrapper hands dev-config reaches its check.yml under its own name", () => {
+  const passes = Object.entries(call(wrapper, "check.yml").with);
+  const passed = forwarded(wrapper, "check.yml");
+  // Two failures, and a run shows neither of them: an input handed on under a
+  // neighbour's name is a setting the consumer wrote with a wrong answer beside
+  // it, and a key dev-config does not declare is a whole argument it ignores.
   expect(passed.filter(([key, from]) => key !== from)).toEqual([]);
   expect(passes.map(([key]) => key).filter((key) => !(key in inputsOf(upstream)))).toEqual([]);
 });
 
-test("a pass-through is declared exactly as dev-config declares it", () => {
+/**
+ * The third failure the check above used to catch, now asked of every input
+ * rather than only of the ones handed on.
+ *
+ * The wrapper declares two kinds: a pass-through, which exists in order to
+ * reach dev-config, and an input of this repo's own, which drives a job here
+ * and must never reach dev-config at all. An equality between "declared" and
+ * "forwarded" cannot express the second kind — and the failure it was there to
+ * catch is the same for both, so it is asked the way that covers both: a
+ * declared input nothing reads is a setting a consumer wrote that nothing acts
+ * on, which is silence with a plausible-looking workflow around it.
+ */
+test("every input the wrapper declares is read by something", () => {
+  const handed = new Set(forwarded(wrapper, "check.yml").map(([key]) => key));
+  const own = ownJobs(wrapper);
+  const unread = Object.keys(inputsOf(wrapper)).filter(
+    (name) => !handed.has(name) && !own.some((job) => reads(job, name)),
+  );
+  expect(unread).toEqual([]);
+});
+
+test("every input the wrapper declares is dev-config's, declared exactly as dev-config declares it", () => {
   const differs = Object.entries(inputsOf(wrapper)).filter(
     ([name, { type, default: fallback }]) => {
       const theirs = inputsOf(upstream)[name];
@@ -140,11 +223,16 @@ test("a pass-through is declared exactly as dev-config declares it", () => {
   );
   // A type or a default of this repo's own is a wrapper that answers for
   // dev-config: a caller who omits the input gets this file's idea of what it
-  // means, and the workflow that reads it never sees the difference.
+  // means, and the workflow that reads it never sees the difference. It holds
+  // for an input of this repo's own too, and for a stronger reason — the two so
+  // far are `database` and `db-gate-evidence`, which this repo implements for
+  // MariaDB and dev-config implements for Postgres. A consumer switching
+  // between the two workflows writes one call either way, and a name that meant
+  // something different here is the trap that shape is worth avoiding.
   expect(differs).toEqual([]);
 });
 
-test("README.md's account of the input surface is dev-config's, minus the database job", async () => {
+test("README.md's account of the input surface is dev-config's own", async () => {
   const readme = await Bun.file(`${root}/README.md`).text();
   const byName = (a: readonly [string, string], b: readonly [string, string]): number =>
     alphabetically(a[0], b[0]);
@@ -172,22 +260,26 @@ test("README.md's account of the input surface is dev-config's, minus the databa
   );
   // Both halves are prose about a file in another repo, which is the statement
   // here most able to go quietly out of date: an input dev-config adds and this
-  // page names in neither place is one nobody decided about.
+  // page names in neither place is one nobody decided about. Nothing is
+  // subtracted from dev-config's surface any more — `database` was, while this
+  // wrapper had no job of its own to turn on, and it is now on the table.
   expect([...tabled.map(([name]) => name), ...refused].toSorted(alphabetically)).toEqual(
-    Object.keys(inputsOf(upstream))
-      .filter((name) => name !== "database")
-      .toSorted(alphabetically),
+    Object.keys(inputsOf(upstream)).toSorted(alphabetically),
   );
 });
 
-test("the wrapper leaves dev-config's database job off and offers no way to turn it on", () => {
+test("the call turns dev-config's database job off with a literal, whatever the caller asked for", () => {
   // Everything else in the call is a caller's input handed on; a second literal
   // would be this workflow answering for a consumer in a value nothing here
   // declares, and dev-config cannot tell that from the consumer's own answer.
+  //
+  // This is also the whole of what keeps the wrapper's own `database` input off
+  // dev-config's Postgres job: the value beside that name is `false` and not an
+  // expression, and the check above refuses this repo's input reaching any
+  // other name of theirs.
   expect(
     Object.entries(call(wrapper, "check.yml").with).filter(([, value]) => !forwards(value)),
   ).toEqual([["database", false]]);
-  expect(Object.keys(inputsOf(wrapper))).not.toContain("database");
 });
 
 test("this repo is gated by, and installs, the dev-config it hands its consumers", async () => {
@@ -201,4 +293,43 @@ test("this repo is gated by, and installs, the dev-config it hands its consumers
   expect(pinned).toStartWith(
     captured(LOCKED.exec(await Bun.file(`${root}/bun.lock`).text())?.[1], "LOCKED"),
   );
+});
+
+/**
+ * The action this repo ships, reached by full path and SHA because a relative
+ * `uses:` inside a called workflow resolves against the CALLER's checkout. So
+ * the pin names a commit of this repo, and a commit it does not carry is an
+ * action GitHub cannot fetch — a database job that fails for every consumer at
+ * once, over a value no consumer wrote.
+ *
+ * Reachability rather than freshness. Whether the pinned commit is the newest
+ * one carrying that action is a release decision; whether it exists at all is
+ * arithmetic, and it is the half that is silently wrong after a squash.
+ */
+test("the action the wrapper pins is a commit this repo carries", async () => {
+  const pins = [...stringsIn(wrapper.document)].filter((text) => OWN_ACTION.test(text));
+  expect(pins).not.toEqual([]);
+  for (const pin of pins) {
+    const sha = captured(OWN_ACTION.exec(pin)?.[1], "OWN_ACTION");
+    const proc = Bun.spawn(["git", "cat-file", "-e", `${sha}^{commit}`], {
+      cwd: root,
+      stdout: "ignore",
+      stderr: "ignore",
+    });
+    expect(`${pin} resolves: ${(await proc.exited) === 0}`).toBe(`${pin} resolves: true`);
+  }
+});
+
+/**
+ * The server the job runs and the server the gate dumps from are one image, and
+ * they are written twice because GitHub gives a service image no way to read a
+ * value declared anywhere else — not an `env:`, not another job's output. So the
+ * two statements are held together here instead.
+ *
+ * A drift between them is the worst kind of quiet: the gate would render one
+ * major's catalogue with another major's client, compare the two renderings to
+ * each other, and pass.
+ */
+test("the image the gate dumps with is the image the job runs its server from", async () => {
+  expect(serviceImages(wrapper)).toContain(await dbImage());
 });

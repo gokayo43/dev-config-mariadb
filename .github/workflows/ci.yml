@@ -21,5 +21,15 @@ jobs:
   check:
     uses: gokayo43/dev-config/.github/workflows/check.yml@602fca2f24341ef9c445b4a6f750e887cf156f37 # v0.50.1
     with:
-      # Nothing here reads an environment at runtime: this repo ships workflows.
+      # The contract wants the .env.example/.gitignore shape of a repo that has
+      # an environment to document. This one has none to document: what it ships
+      # reads variables the CALLING job sets — DATABASE_URL, and the INPUT_* an
+      # action.yml maps in — and there is no value here for a developer to copy
+      # into a file of their own.
       contract-exemptions: secrets
+      # Read in review like the reason on a lint directive, and it is about this
+      # suite rather than about the gate: the replay gate's cases each drive a
+      # real MariaDB, which the suite starts as a container and reaches on the
+      # runner's loopback. The sealed lane puts the run in a network namespace
+      # with a loopback of its own, which no published port is on.
+      test-network: the replay gate's suite drives a MariaDB container on the runner's loopback
