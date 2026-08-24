@@ -1,6 +1,6 @@
 import { plainly, type Verdict } from "../_lib/annotations.ts";
 
-import { killGroup, shellGroup } from "./group.ts";
+import { capturing, killGroup, shellGroup } from "./group.ts";
 
 /**
  * The repo's own black-box probe of the app the boot step brought up: a real
@@ -171,14 +171,6 @@ const TOO_LATE = Symbol("the output did not arrive before the grace ran out");
 /** How long the output gets to arrive once the group has been killed. */
 const SALVAGE_MS = 5_000;
 
-function after(ms: number): Promise<typeof TOO_LATE> {
-  return new Promise((resolve) => {
-    // Unref'd, so that a grace nobody is waiting on any more cannot be the
-    // thing keeping this process alive after the race has been won.
-    setTimeout(() => resolve(TOO_LATE), ms).unref();
-  });
-}
-
 export async function probeGate({ root, command, url, timeout }: Probe): Promise<Verdict> {
   // Read before the command is looked at, so that a bound nobody can parse is
   // refused whether or not there is a probe to run under it.
@@ -239,11 +231,12 @@ export async function probeGate({ root, command, url, timeout }: Probe): Promise
       // process this cannot settle for. The group kill below is the point.
     });
 
-    const collected = Promise.all([
-      new Response(proc.stdout).text(),
-      new Response(proc.stderr).text(),
-      proc.exited,
-    ]);
+    // Held as readers rather than handed to a `Response`, because the kill
+    // path below has to be able to put them down — `group.ts` at `capturing`
+    // is the measurement and the argument.
+    const said = capturing(proc.stdout);
+    const wrote = capturing(proc.stderr);
+    const collected = Promise.all([said.text, wrote.text, proc.exited]);
 
     // Raced rather than awaited, so that the bound bounds *this function* and
     // not merely the shell: whatever is still holding the pipe, the overrun is
@@ -255,10 +248,32 @@ export async function probeGate({ root, command, url, timeout }: Probe): Promise
       // Bounded again, and for the reason the first bound exists: the group
       // kill closes the pipes for everything the probe started, so this settles
       // at once — and a survivor that escaped the group by making a session of
-      // its own must not turn a report into a hang a second time. What the
-      // grace does not collect is lost, which the annotation says.
-      const salvaged = await Promise.race([collected, after(SALVAGE_MS)]);
-      if (salvaged !== TOO_LATE) [out, err] = salvaged;
+      // its own must not turn a report into a hang a second time.
+      //
+      // "Must not" is now enforced rather than hoped for. Such a survivor still
+      // holds the write end of these pipes, and a pending read on them keeps
+      // Bun's event loop alive: this gate published a correct verdict and then
+      // sat on a process that never exited — a step that hangs until the job's
+      // timeout with the ramp and every piece of evidence after it skipped. So
+      // the grace is a bound this function can cancel (not unref'd: it is what
+      // holds the loop until it is decided), and when it fires the reads are
+      // put down. What the probe writes after the kill is lost, which the
+      // annotation says.
+      let grace: ReturnType<typeof setTimeout> | undefined;
+      const salvaged = await Promise.race([
+        collected,
+        new Promise<typeof TOO_LATE>((resolve) => {
+          grace = setTimeout(() => resolve(TOO_LATE), SALVAGE_MS);
+        }),
+      ]);
+      clearTimeout(grace);
+      if (salvaged === TOO_LATE) {
+        said.abandon();
+        wrote.abandon();
+        [out, err] = await Promise.all([said.text, wrote.text]);
+      } else {
+        [out, err] = salvaged;
+      }
     } else {
       [out, err, status] = finished;
     }

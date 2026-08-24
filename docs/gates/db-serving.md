@@ -60,9 +60,57 @@ printed: it is text the graded repo wrote, on the stdout the runner reads its
 own commands off — `_lib/annotations.ts` carries that argument at length, and
 dev-config#71 is the same hole upstream.
 
+The poll reads the process two ways, because a child that died on a signal has
+no exit code at all: the code is never chosen, and only the signal name is
+there. That is the canonical runner failure rather than an exotic one — it is
+what the OOM killer does to an app booting against a schema it cannot hold — and
+a gate reading the code alone would spend the whole bound and then report a live
+process.
+
 An app that failed to come up is killed before the step ends. Nothing after it
 can use the app, and a wedged process holding a port until the job's timeout is
 a runner this suite also has to run on.
+
+**The step ends; the app does not.** That is a stranger pair than it looks: a
+process that spawned a long-lived child stays alive as long as the child does,
+so a boot step that published a green verdict and let the runtime hold that
+reference would hang until the job's timeout — with the probe, the ramp, the
+floor and the evidence all skipped, on exactly the runs where everything
+worked. The gate releases the app deliberately and leaves it serving.
+
+## What the graded repo does not get to choose
+
+These steps run inside the job of the repository they grade, after its install
+scripts, its build and its migrator have each had a turn. Three things they
+would otherwise take from their surroundings are that repo's to rewrite, and
+every one of them ends the same way — the step green, having graded nothing:
+
+- **the working directory.** `bun` runs a top-level `preload` from the
+  `bunfig.toml` in its working directory before the file it was given, so a gate
+  running in the graded checkout runs whatever that repo's bunfig names. A
+  `process.exit(0)` there ends the step at zero. No hostility is required: a
+  legitimate `preload` injects exactly the same way. The gate steps therefore
+  run in the action's own checkout, and the app, the probe and the ramp are
+  pointed at the project by a path instead;
+- **the interpreter.** A step of the graded repo's own writes `$GITHUB_PATH`,
+  the runner folds it into every later step, and a `bun` resolved by name is
+  then that repo's to replace with a program that exits 0;
+- **everything else resolved by name** — `setsid` and `bash` for the processes
+  these steps start, and `curl`, `sha256sum` and `tar` for the k6 fetch below. A
+  checksum is a contract only while the program checking it is the one this job
+  started.
+
+So the calling job reads the interpreter and the search path once, in a step
+placed after `setup-bun` and before `bun install` — the last moment at which no
+line of the graded repo's code has run — and hands both to the action. A step
+output cannot be rewritten once it is set, and a step's own `env:` beats
+anything an earlier step exported, which is what makes those two immutable
+rather than merely early.
+
+One consequence a consumer should know: the app and the probe run under that
+same search path, so a directory a repo prepends through `$GITHUB_PATH` does not
+reach its own app here either. Its `PATH` is the job's, as it stood after
+`setup-bun`.
 
 ## The repo's own probe
 
@@ -148,7 +196,10 @@ than declared as a threshold in the shipped script, because `capacity-script`
 replaces that file entirely and a rule a caller can drop by accident is not a
 rule.
 
-So the step fails when: k6 died; it exited cleanly and exported no summary at
+So the step fails when: k6 died, or ran past its bound and was killed with
+everything it started — `capacity-script` is a program of the repo's own, and a
+script that wedges would otherwise spend the job's whole budget and take the
+floor and the evidence with it; it exited cleanly and exported no summary at
 all; more than a tenth of its requests failed; it ran and made no requests, so
 there is no number to record; the summary it wrote is not the shape this reads;
 or a route the app serves was never exercised. Latency, throughput and a failure
@@ -200,7 +251,12 @@ still waives its route, and one mistake earns one diagnostic.
 An app whose route table comes back empty fails, and so does an app that serves
 no `/__route-log` at all — a floor that cannot see the routes is not a floor, and
 "the app named nothing" is exactly the never-load-tested case this exists to
-catch.
+catch. So does one that answers 200 with something that is not a route log,
+which is what a single-page app's catch-all does to every unmatched path: it is
+refused as a problem this step reports, naming which of the two reads it was,
+rather than as an exception thrown past the verdict — and the first read is
+taken before k6 runs, so an app that cannot answer it is refused before the ramp
+is paid for.
 
 ## Where k6 comes from
 
@@ -243,6 +299,11 @@ Everything these steps leave in the runner is uploaded as the artifact
 | `capacity.json`         | the raw k6 summary, which the table is read from and another run's can be diffed against                             |
 | `route-log-before.json` | what the app declared it serves, and what the boot poll had already reached                                          |
 | `route-log-after.json`  | the same, after the ramp — the floor's verdict is the difference between the two                                     |
+
+It runs under `always()` rather than `!cancelled()`, and the difference is the
+whole point of having it: the runner marks a job cancelled when it hits its own
+`timeout-minutes`, so `!cancelled()` skipped the upload on exactly the runs that
+had spent fifteen minutes producing the evidence.
 
 The upload belongs to the job rather than to either action — one database, one
 app, one artifact, and a name that may be claimed only once per run;
@@ -288,6 +349,9 @@ gets trusted for things it never checked.
 - **Anything about racing writers.** The ramp puts twenty virtual users on the
   app at once, and nothing here asserts anything about what happens when two of
   them meet in one row. That is a repo's own probe or its own suite, not this.
+- **A tool the gate resolves by name that the machine itself is lying about.**
+  The pins above put the graded repo out of reach; they say nothing about a
+  compromised runner image, which is a different threat with a different answer.
 - **An app the migrations broke in a way it survives.** A schema the app boots
   against, serves every route against, and is wrong about is what the probe is
   for, and the probe is optional.

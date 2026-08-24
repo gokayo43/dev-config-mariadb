@@ -10,8 +10,26 @@ description: >-
 
 inputs:
   working-directory:
-    description: Where the project lives.
+    description: >-
+      Where the project lives, relative to the checkout. The app starts there,
+      the probe runs there and the ramp measures from there; this gate does not
+      run there, and passes it as an explicit path rather than by being run in
+      it.
     default: .
+  bun:
+    description: >-
+      The absolute path to the interpreter these gates run under, as the calling
+      job read it before running a line of the graded repo's code. A bare `bun`
+      is resolved through a PATH that repo's own steps can prepend to, which
+      replaces the gate with a program that exits 0.
+    required: true
+  path:
+    description: >-
+      The search path the gates' own tools are found on, from the same reading —
+      `setsid` and `bash` for the processes they start, and `curl`, `sha256sum`
+      and `tar` for the pinned k6 fetch. A checksum is only a contract while the
+      program checking it is the one this job started.
+    required: true
   start-command:
     description: >-
       How to start the app, as shell code. Required, and deliberately without a
@@ -74,11 +92,29 @@ runs:
     # contract needs more than that extends the workflow rather than the call.
     - name: Boot against that database
       shell: bash
-      working-directory: ${{ inputs.working-directory }}
+      # The action's own checkout, never the graded repo's. `bun` reads a
+      # top-level `preload` out of a `bunfig.toml` in its working directory
+      # (probed: only that directory — no parent is walked, and no global file
+      # is read), so a gate running in the graded checkout runs whatever that
+      # repo's bunfig names, before a line of the gate. `process.exit(0)` there
+      # ends the step at zero having graded nothing, and no hostility is needed:
+      # a legitimate preload injects the same way. The app still starts in the
+      # project below, by the path this step hands the gate.
+      working-directory: ${{ github.action_path }}
       env:
         INPUT_START_COMMAND: ${{ inputs['start-command'] }}
         INPUT_HEALTH_URL: ${{ inputs['health-url'] }}
         INPUT_APP_LOG: ${{ runner.temp }}/server.log
+        INPUT_BUN: ${{ inputs.bun }}
+        # Declared by this step, which is what makes it this step's: the runner
+        # overlays a step's own `env:` over the environment it inherited, so a
+        # PATH the graded repo prepended to through $GITHUB_PATH does not reach
+        # the gate — nor the app it starts, which is the trade gate.sh states.
+        PATH: ${{ inputs.path }}
+        # `github.workspace` is an expression context rather than a variable, so
+        # nothing a step writes reaches it — which is what makes this an
+        # explicit path and not the same inheritance the cwd above just gave up.
+        INPUT_PROJECT: ${{ github.workspace }}/${{ inputs['working-directory'] }}
         SITE_URL: http://localhost
         BETTER_AUTH_SECRET: ci-not-a-secret-ci-not-a-secret-ci
         # The app serves a counter endpoint naming every route it has and how
@@ -87,7 +123,9 @@ runs:
         ROUTE_LOG: "true"
       run: |
         set -euo pipefail
-        bun "$GITHUB_ACTION_PATH/boot.main.ts"
+        # shellcheck source=/dev/null
+        . "$GITHUB_ACTION_PATH/gate.sh"
+        gate boot.main.ts
 
     # Between the boot and the ramp, which is the only place it can ask what it
     # asks. Health answering 200 says the app starts against this schema; the
@@ -100,14 +138,21 @@ runs:
     - name: The repo's own probe of the booted app
       if: ${{ inputs['probe-command'] != '' || inputs['probe-timeout'] != '' }}
       shell: bash
-      working-directory: ${{ inputs.working-directory }}
+      # The action's own checkout, for the reason the boot step gives. The
+      # probe is still run in the project, by the path this step hands the gate.
+      working-directory: ${{ github.action_path }}
       env:
         INPUT_PROBE_COMMAND: ${{ inputs['probe-command'] }}
         INPUT_PROBE_TIMEOUT: ${{ inputs['probe-timeout'] }}
         INPUT_HEALTH_URL: ${{ inputs['health-url'] }}
+        INPUT_BUN: ${{ inputs.bun }}
+        PATH: ${{ inputs.path }}
+        INPUT_PROJECT: ${{ github.workspace }}/${{ inputs['working-directory'] }}
       run: |
         set -euo pipefail
-        bun "$GITHUB_ACTION_PATH/probe.main.ts"
+        # shellcheck source=/dev/null
+        . "$GITHUB_ACTION_PATH/gate.sh"
+        gate probe.main.ts
 
     # A number, not a latency threshold. On a shared runner a latency bound
     # measures the runner, and a gate that fails on that is one people turn off.
@@ -125,7 +170,10 @@ runs:
     # which is the one thing this step cannot fetch for itself from inside Bun.
     - name: Capacity ramp, and every route it reaches
       shell: bash
-      working-directory: ${{ inputs.working-directory }}
+      # The action's own checkout, for the reason the boot step gives — and here
+      # it also decides which `bunfig.toml` k6.sh's own shell would meet. k6
+      # itself is run in the project, by the path this step hands the gate.
+      working-directory: ${{ github.action_path }}
       env:
         INPUT_HEALTH_URL: ${{ inputs['health-url'] }}
         INPUT_CAPACITY_PATH: ${{ inputs['capacity-path'] }}
@@ -134,8 +182,20 @@ runs:
         INPUT_ROUTE_LOG_BEFORE: ${{ runner.temp }}/route-log-before.json
         INPUT_ROUTE_LOG_AFTER: ${{ runner.temp }}/route-log-after.json
         INPUT_SUMMARY_FILE: ${{ runner.temp }}/capacity.json
+        INPUT_BUN: ${{ inputs.bun }}
+        # The fetch below is `curl`, `sha256sum` and `tar`, every one of them
+        # resolved by name: pinning the path is what keeps "the SHA-256 is the
+        # contract" true, since a forged sha256sum prints OK over anything.
+        PATH: ${{ inputs.path }}
+        INPUT_PROJECT: ${{ github.workspace }}/${{ inputs['working-directory'] }}
       run: |
         set -euo pipefail
         # shellcheck source=/dev/null
+        . "$GITHUB_ACTION_PATH/gate.sh"
+        # Before the fetch, not after it: k6.sh spends a network round trip, and
+        # a step that spends it and then refuses on a missing input has spent it
+        # for nothing.
+        gate_pinned
+        # shellcheck source=/dev/null
         . "$GITHUB_ACTION_PATH/k6.sh"
-        bun "$GITHUB_ACTION_PATH/ramp.main.ts"
+        gate ramp.main.ts

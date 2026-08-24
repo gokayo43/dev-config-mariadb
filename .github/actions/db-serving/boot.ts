@@ -1,4 +1,4 @@
-import { openSync } from "node:fs";
+import { closeSync, openSync } from "node:fs";
 
 import { plainly, type Verdict } from "../_lib/annotations.ts";
 
@@ -134,6 +134,24 @@ export async function bootGate({ root, command, url, log, seconds }: Boot): Prom
     stderr: output,
   });
 
+  // The two things this process must let go of, and they are the whole of why a
+  // healthy boot ends at all.
+  //
+  // A subprocess keeps Bun's event loop alive for as long as it runs, and the
+  // app here is meant to outlive this step by design — so a gate that published
+  // a perfect verdict would then sit on a process that never exits, the step
+  // would hang until the job's timeout, and the probe and the ramp would never
+  // run. Only a FAILING boot ended, because killing the app is what happened to
+  // drop that reference. Unref'd, the loop is held by this gate's own poll and
+  // nothing else, and the app is left running exactly as the contract above
+  // says.
+  //
+  // The descriptor is the child's from the moment it is spawned — it holds a
+  // dup — so this one is ours to close, and closing it is what stops one
+  // descriptor per call accumulating in a suite that makes many.
+  app.unref();
+  closeSync(output);
+
   const started = Date.now();
   const deadline = started + seconds * 1000;
   const failed = async (problem: string): Promise<Verdict> => {
@@ -151,10 +169,20 @@ export async function bootGate({ root, command, url, log, seconds }: Boot): Prom
     // Read after the poll rather than before it, so that an app which answered
     // and then exited is reported as having booted: what this step claims is
     // that the migrations produced a schema the app starts against.
-    const status = app.exitCode;
-    if (status !== null) {
+    //
+    // Both halves, because a child that died on a signal has NO exit code —
+    // `exitCode` stays null and `signalCode` carries the name. That is not an
+    // exotic case on a runner: it is what the OOM killer does to an app booting
+    // against a schema it cannot hold in memory, and reading only the code
+    // would spend the whole bound and then report a live process.
+    const ended = app.signalCode ?? app.exitCode;
+    if (ended !== null) {
+      const how =
+        app.signalCode === null
+          ? `exited ${app.exitCode}`
+          : `was killed by ${app.signalCode}, so it never chose an exit code`;
       return await failed(
-        `the app exited ${status} before ${url} answered — its own output is above. A migration set that applies and leaves the app unable to start against the schema it built is what this step is here to catch; a start-command that is wrong is the other reading, and the output says which.`,
+        `the app ${how} before ${url} answered — its own output is above. A migration set that applies and leaves the app unable to start against the schema it built is what this step is here to catch; a start-command that is wrong is the other reading, and the output says which.`,
       );
     }
     if (Date.now() >= deadline) {

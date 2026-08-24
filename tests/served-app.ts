@@ -10,10 +10,11 @@
  * against is a payload built from the published protocol rather than one this
  * repo wrote to match its own reader.
  *
- * `APP_MODE` is how a case asks for the app that is not fine. Each of the three
- * is a real failure a consuming repo has: a process that dies on the way up
- * because the schema is not what it expected, one that accepts connections and
- * never answers, and one that serves everything except the instrument.
+ * `APP_MODE` is how a case asks for the app that is not fine. Each is a real
+ * failure a consuming repo has: a process that dies on the way up because the
+ * schema is not what it expected, one the kernel takes with no exit code of its
+ * own, one that accepts connections and never answers, and one that serves
+ * everything except the instrument.
  */
 import { ENDPOINT, EVERY_METHOD, type Served } from "@gokayo43/dev-config/route-log.ts";
 
@@ -24,6 +25,13 @@ const mode = Bun.env["APP_MODE"] ?? "serving";
 // process down by its group however the run went.
 const pidFile = Bun.env["APP_PID_FILE"];
 if (pidFile !== undefined) await Bun.write(pidFile, String(process.pid));
+
+if (mode === "killed") {
+  // What the OOM killer does to an app booting against a schema it cannot hold:
+  // no exit code at all, only a signal. The canonical runner failure, and the
+  // one a gate reading `exitCode` alone cannot see.
+  process.kill(process.pid, "SIGKILL");
+}
 
 if (mode === "dies") {
   // On stdout, the way a runtime reports what it could not do. The boot step
@@ -69,6 +77,14 @@ Bun.serve({
     // the gate's own two fetches are not the scenario's traffic.
     if (pathname === ENDPOINT) {
       if (mode === "no-instrument") return new Response("not found", { status: 404 });
+      // The shape a single-page app's catch-all gives every unmatched path: 200,
+      // and a page. Worse than a 404 for a floor, because it looks like an
+      // answer.
+      if (mode === "html-catch-all") {
+        return new Response("<!doctype html><title>app</title>", {
+          headers: { "content-type": "text/html" },
+        });
+      }
       return Response.json({ routeTable: ROUTE_TABLE, counts: tally() });
     }
     const path = routed(pathname);

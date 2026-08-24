@@ -16,7 +16,7 @@ import { killGroup, shellGroup } from "../.github/actions/db-serving/group.ts";
 const PROGRAM = join(import.meta.dir, "served-app.ts");
 
 /** What a case asks the app to be. `served-app.ts` says what each one does. */
-export type Mode = "serving" | "dies" | "hangs" | "no-instrument";
+export type Mode = "serving" | "dies" | "killed" | "hangs" | "no-instrument" | "html-catch-all";
 
 const running: string[] = [];
 

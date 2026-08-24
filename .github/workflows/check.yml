@@ -259,6 +259,28 @@ jobs:
 
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
 
+      # Both facts every gate step below is handed, read here and nowhere else,
+      # because here is the last moment in this job at which no line of the
+      # graded repo's own code has run yet — not its install scripts, not its
+      # build, not its migrator.
+      #
+      # A step writes $GITHUB_ENV and $GITHUB_PATH and the runner folds both
+      # into the environment of every LATER step; a step output cannot be
+      # rewritten once set. So a repo that prepends a directory holding its own
+      # `bun` would replace the interpreter the gates run under — the gate's own
+      # code never executing, the step green — and one that prepends its own
+      # `curl` or `sha256sum` would hand the ramp a "verified" k6 of its
+      # choosing. Neither reaches a value captured before it ran. This is the
+      # same bar `_lib/annotations.ts` sets against `::stop-commands::` and
+      # `db-replay/database.ts` sets against a migrator's stdout: what the gate
+      # grades is not the graded repo's to decide.
+      - id: pinned
+        run: |
+          {
+            echo "bun=$(command -v bun)"
+            echo "path=$PATH"
+          } >> "$GITHUB_OUTPUT"
+
       - run: bun install --frozen-lockfile
 
       # The same step dev-config's database job runs, and for the same reason: a
@@ -299,6 +321,8 @@ jobs:
           capacity-script: ${{ inputs['capacity-script'] }}
           capacity-path: ${{ inputs['capacity-path'] }}
           route-allowlist: ${{ inputs['route-allowlist'] }}
+          bun: ${{ steps.pinned.outputs.bun }}
+          path: ${{ steps.pinned.outputs.path }}
 
       # Everything the steps above wrote into the runner, which is deleted with
       # the runner. The upload belongs to the job rather than to either action:
@@ -308,11 +332,18 @@ jobs:
       #
       # A step that failed on the way to a number is exactly when its partial
       # evidence is worth having — the schema a run never got to compare, the
-      # summary of a ramp that died, the output of an app that never answered —
-      # and a cancelled run has nothing to say. Reproducing any of them by
-      # re-running with more printing is the shape of debugging every diagnostic
-      # here exists to avoid, so the files leave the run whatever happened to
-      # it.
+      # summary of a ramp that died, the output of an app that never answered.
+      # Reproducing any of them by re-running with more printing is the shape of
+      # debugging every diagnostic here exists to avoid, so the files leave the
+      # run whatever happened to it.
+      #
+      # `always()` and not `!cancelled()`, which is the same sentence with a
+      # hole in it: the runner sets the job's status to Cancelled when the JOB
+      # is cancelled — and a job that hit its own `timeout-minutes` above is
+      # cancelled — so `cancelled()` is true and the step is skipped. That is
+      # precisely the run whose evidence is worth most: an app that never came
+      # up, or a ramp that wedged, spending the budget and then losing
+      # everything it wrote. `always()` is the literal true this needs.
       #
       # server.log is copied while the app still holds it open, which is not a
       # race to fix: the ramp needs the process alive, so there is no moment
@@ -320,7 +351,7 @@ jobs:
       # torn. The boot step's own annotation, not this file, is what says an app
       # failed to start.
       - name: Publish what this job built, measured and read
-        if: ${{ !cancelled() }}
+        if: ${{ always() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           # The one place this name is defaulted, so that a caller passing an

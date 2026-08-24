@@ -64,6 +64,14 @@ if (isList(also)) {
   }
 }
 
+// A script that never returns, which is what the ramp's bound is for. Forked
+// into its own session first, so that the case also proves the kill reaches
+// what the ramp started rather than only the ramp.
+if (plan["wedge"] === true) {
+  Bun.spawn(["setsid", "sleep", "120"], { stdout: "ignore", stderr: "ignore" }).unref();
+  await new Promise(() => {});
+}
+
 const summary = textAt(plan, "summary");
 if (summary !== undefined) await Bun.write(exported, Bun.file(summary));
 

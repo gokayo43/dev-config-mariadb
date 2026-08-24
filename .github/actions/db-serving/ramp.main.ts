@@ -1,6 +1,8 @@
+import { resolve } from "node:path";
+
 import { allowlistFrom } from "../_lib/allowlist.ts";
 import { entry, inputs, publish, required } from "../_lib/annotations.ts";
-import { rampGate, SHIPPED } from "./ramp.ts";
+import { RAMP_SECONDS, rampGate, SHIPPED } from "./ramp.ts";
 
 await entry(async () => {
   const read = inputs(
@@ -8,6 +10,7 @@ await entry(async () => {
     "capacity-path",
     "route-allowlist",
     "health-url",
+    "project",
     "route-log-before",
     "route-log-after",
     "summary-file",
@@ -21,7 +24,17 @@ await entry(async () => {
         "K6",
         "the step must source k6.sh, which fetches the pinned binary and exports it",
       ),
-      script: read["capacity-script"] === "" ? SHIPPED : read["capacity-script"],
+      // The project the ramp runs in, and what a script of the repo's own is
+      // named relative to — the gate itself runs in the action's checkout.
+      project: resolve(read["project"]),
+      // The module's own number rather than an input: a bound a caller could
+      // raise is a bound a wedged script writes itself out of. ramp.ts carries
+      // the argument.
+      seconds: RAMP_SECONDS,
+      script:
+        read["capacity-script"] === ""
+          ? SHIPPED
+          : resolve(read["project"], read["capacity-script"]),
       url: read["health-url"],
       paths: read["capacity-path"],
       // The floor is this step's too: it is decided by the two snapshots below,

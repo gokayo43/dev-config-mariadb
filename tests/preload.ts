@@ -1,5 +1,6 @@
 import { afterAll, afterEach } from "bun:test";
 
+import { removeCheckouts } from "./action-step.ts";
 import { stopApps } from "./app.ts";
 import { stop } from "./mariadb.ts";
 import { removeRoots } from "./tree.ts";
@@ -20,6 +21,7 @@ import { removeRoots } from "./tree.ts";
 afterEach(async () => {
   await stopApps();
   await removeRoots();
+  await removeCheckouts();
 });
 
 afterAll(stop);

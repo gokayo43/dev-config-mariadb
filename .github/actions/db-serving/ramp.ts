@@ -2,7 +2,8 @@ import type { Allowlist } from "../_lib/allowlist.ts";
 import { plainly, type Verdict } from "../_lib/annotations.ts";
 
 import { capacity, parseSummary } from "./capacity.ts";
-import { ENDPOINT } from "./route-log.ts";
+import { asGroup, capturing, killGroup } from "./group.ts";
+import { ENDPOINT, type RouteLog } from "./route-log.ts";
 import { parseRouteLog, routeCoverage } from "./route-coverage.ts";
 
 /**
@@ -60,9 +61,23 @@ const TREND_STATS = "--summary-trend-stats=avg,min,med,p(95),p(99),max";
  */
 const SNAPSHOT_MS = 30_000;
 
+/**
+ * How long the ramp gets. `capacity-script` is a program of the repo's own —
+ * the gate owns the running, the repo owns the meaning — and a script that
+ * wedges would otherwise spend the job's whole fifteen minutes, taking the
+ * floor, the evidence upload and every diagnostic with it. The shipped ramp is
+ * sixty seconds of stages, so this is an order of magnitude over any honest one
+ * and still leaves the job time to publish what it has.
+ */
+export const RAMP_SECONDS = 600;
+
 export interface Ramp {
   /** The pinned k6, fetched and checksum-verified by the step that runs this. */
   readonly k6: string;
+  /** The project the caller declared: where k6 runs, and what a repo's own script is relative to. */
+  readonly project: string;
+  /** How long k6 gets before it is killed, with everything it started. */
+  readonly seconds: number;
   /** The script k6 runs: the repo's own `capacity-script`, or the one shipped beside this file. */
   readonly script: string;
   /** The booted app, under the name every step here uses for it. */
@@ -79,32 +94,50 @@ export interface Ramp {
   readonly summary: string;
 }
 
+/** One read of the app's counters: the counters, or what is wrong with the answer. */
+type Snapshot = { readonly counters: RouteLog } | { readonly refused: string };
+
 /**
- * One read of the app's counters, landed on its file or not taken at all.
+ * One read of the app's counters, landed on its file and read as what it has to
+ * be.
  *
  * The route floor is the difference between these two reads, so the health poll
  * that got the app this far sits inside the first and cannot be mistaken for a
  * route the ramp exercised.
+ *
+ * The payload is parsed **here**, where the fetch is, rather than after the
+ * ramp: a body that is not a route log is a problem this step reports, not an
+ * exception thrown past the verdict — one that would take the capacity table,
+ * k6's own output and the failure bound's diagnostic with it, and arrive as a
+ * bare `JSON Parse error` naming neither the app nor which of the two reads it
+ * was. Reading the first one before k6 starts is the other half: an app that
+ * cannot answer this is refused before the run rather than after paying for it.
  */
-async function snapshot(from: string, onto: string): Promise<string | undefined> {
+async function snapshot(from: string, onto: string, source: string): Promise<Snapshot> {
   const failed = `${from} did not answer — an app under the capacity ramp serves the route-log endpoint when ROUTE_LOG is set, and without it there is no floor under the ramp at all`;
+  let body: string;
   try {
     const answered = await fetch(from, { signal: AbortSignal.timeout(SNAPSHOT_MS) });
-    if (!answered.ok) return `${failed} (it answered ${answered.status})`;
-    await Bun.write(onto, await answered.text());
-    return undefined;
+    if (!answered.ok) return { refused: `${failed} (it answered ${answered.status})` };
+    body = await answered.text();
   } catch {
-    return failed;
+    return { refused: failed };
   }
-}
-
-/** One snapshot as the floor reads it, from the file the fetch above landed. */
-async function routeLogIn(file: string, source: string): Promise<ReturnType<typeof parseRouteLog>> {
-  return parseRouteLog(await Bun.file(file).text(), source);
+  await Bun.write(onto, body);
+  try {
+    return { counters: parseRouteLog(body, source) };
+  } catch (badly) {
+    const said = badly instanceof Error ? badly.message : String(badly);
+    return {
+      refused: `${source} answered ${from} with something that is not a route log — ${said}. An app under ROUTE_LOG serves that endpoint and only that report on it; a catch-all that answers every unmatched path is the usual cause, and it leaves the ramp with no floor under it.`,
+    };
+  }
 }
 
 export async function rampGate({
   k6,
+  project,
+  seconds,
   script,
   url,
   paths,
@@ -119,19 +152,52 @@ export async function rampGate({
   // another process.
   const routeLog = `${new URL(url).origin}${ENDPOINT}`;
 
-  const missing = await snapshot(routeLog, before);
-  if (missing !== undefined) return { problems: [missing] };
+  const first = await snapshot(routeLog, before, "the route log read before the ramp");
+  if ("refused" in first) return { problems: [first.refused] };
 
-  const proc = Bun.spawn([k6, "run", "--quiet", TREND_STATS, "--summary-export", summary, script], {
-    env: { ...plainly(process.env), HEALTH_URL: url, CAPACITY_PATH: paths },
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [out, err, status] = await Promise.all([
-    new Response(proc.stdout).text(),
-    new Response(proc.stderr).text(),
-    proc.exited,
+  // In the project, under a session of its own, and bounded — the three things
+  // a program the repo chose needs from the gate running it. The cwd is the
+  // project because `capacity-script` is the repo's own path; the session is so
+  // that the bound below can take a script that forked; and the bound is
+  // `RAMP_SECONDS`, which says why.
+  const proc = Bun.spawn(
+    asGroup([k6, "run", "--quiet", TREND_STATS, "--summary-export", summary, script]),
+    {
+      cwd: project,
+      env: { ...plainly(process.env), HEALTH_URL: url, CAPACITY_PATH: paths },
+      stdout: "pipe",
+      stderr: "pipe",
+    },
+  );
+  const said = capturing(proc.stdout);
+  const wrote = capturing(proc.stderr);
+  const RAN_LONG = Symbol("the ramp's bound fired");
+  let bound: ReturnType<typeof setTimeout> | undefined;
+  const finished = await Promise.race([
+    Promise.all([said.text, wrote.text, proc.exited]),
+    new Promise<typeof RAN_LONG>((resolve) => {
+      bound = setTimeout(() => resolve(RAN_LONG), seconds * 1000);
+    }),
   ]);
+  clearTimeout(bound);
+
+  if (finished === RAN_LONG) {
+    killGroup(proc.pid);
+    // The reads are put down for the reason `group.ts` gives at `capturing`: a
+    // survivor holding the write end of these pipes would otherwise keep this
+    // process alive after the verdict is written.
+    said.abandon();
+    wrote.abandon();
+    const [out, err] = await Promise.all([said.text, wrote.text]);
+    return {
+      log: `${out}${err}`.trimEnd(),
+      problems: [
+        `the ramp was still running after ${seconds}s and was killed, along with everything it had started — ${script} either wedged or is measuring something far longer than a ramp, and the job's own budget is what it would otherwise spend`,
+      ],
+    };
+  }
+
+  const [out, err, status] = finished;
   const log = `${out}${err}`.trimEnd();
 
   if (status !== 0) {
@@ -147,7 +213,7 @@ export async function rampGate({
   // failure bound, and the bound is the diagnostic that says what happened — so
   // this failure is held until the measurement has been read and published, and
   // the step then fails carrying both.
-  const gone = await snapshot(routeLog, after);
+  const second = await snapshot(routeLog, after, "the route log read after the ramp");
 
   // Refused by name rather than met as an ENOENT three frames later. k6 exiting
   // 0 having exported nothing is reachable through a `capacity-script` of the
@@ -165,19 +231,15 @@ export async function rampGate({
   }
 
   const measured = capacity(parseSummary(await exported.text()));
-  if (gone !== undefined) {
-    return { ...measured, log, problems: [...measured.problems, gone] };
+  if ("refused" in second) {
+    return { ...measured, log, problems: [...measured.problems, second.refused] };
   }
 
   // The floor, from the two reads this step took: a route whose count rose is a
   // route the ramp reached. It is decided here rather than in a step of its own
   // for the reason the docblock gives — a measurement the bound refuses is
   // still a run whose routes are worth naming.
-  const floor = routeCoverage(
-    await routeLogIn(before, "the route log read before the ramp"),
-    await routeLogIn(after, "the route log read after the ramp"),
-    allowlist,
-  );
+  const floor = routeCoverage(first.counters, second.counters, allowlist);
   const noted = floor.note === undefined ? {} : { note: floor.note };
   return {
     ...measured,

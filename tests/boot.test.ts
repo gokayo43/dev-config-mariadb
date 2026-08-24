@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { readdirSync } from "node:fs";
 import { join } from "node:path";
 
 import {
@@ -104,4 +105,32 @@ test("a health-url that is not a URL is refused by name rather than polled to th
   expect(() => healthUrlFrom("localhost:3000/health")).toThrow("not an http(s) URL");
   expect(() => healthUrlFrom("/health")).toThrow("not an http(s) URL");
   expect(healthUrlFrom("http://127.0.0.1:3000/health")).toBe("http://127.0.0.1:3000/health");
+});
+
+test("an app the kernel killed is named by its signal rather than waited out", async () => {
+  // `exitCode` is null for a signal-killed child — the code is never chosen —
+  // so a gate reading it alone spends the whole bound and then reports a live
+  // process. That is the canonical runner failure: the OOM killer taking an app
+  // booting against a schema it cannot hold in memory.
+  const { verdict, took } = await boot("killed", 30);
+
+  expect(verdict.problems).toHaveLength(1);
+  expect(verdict.problems[0]).toContain("was killed by SIGKILL, so it never chose an exit code");
+  expect(took).toBeLessThan(20_000);
+});
+
+test("the log descriptor is the child's, not this process's, once the app is started", async () => {
+  // The app writes into a file this gate opens, and the child holds a dup of
+  // it from the moment it is spawned — so the parent's copy is one descriptor
+  // per boot that nothing ever closes. One per run of the shipped step is
+  // bounded; in a suite that boots many, it is a leak with a fixed cost per
+  // case and no ceiling.
+  const open = (): number => readdirSync("/proc/self/fd").length;
+
+  const before = open();
+  for (let each = 0; each < 3; each++) await boot("dies", BOOT_SECONDS);
+
+  // Not "equal": a test runner has its own reasons to open a file. What this
+  // refuses is growth in proportion to the number of boots.
+  expect(open() - before).toBeLessThan(3);
 });

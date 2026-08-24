@@ -92,8 +92,11 @@ test("every file the gates leave in the runner is in the artifact the job upload
   expect(written.filter((file) => !path.includes(file))).toEqual([]);
 
   // The run that failed on the way to a number is exactly the run whose partial
-  // evidence is worth having; a cancelled one has nothing to say.
-  expect(textAt(upload, "if")).toContain("!cancelled()");
+  // evidence is worth having — and `!cancelled()` is not that condition: the
+  // runner marks the job cancelled when it hits its own `timeout-minutes`, so
+  // the step was skipped on exactly the runs that had spent fifteen minutes
+  // producing the evidence. This assertion used to hold the hole in place.
+  expect(textAt(upload, "if")).toBe("${{ always() }}");
   expect(textAt(mapAt(upload, "with"), "if-no-files-found")).toBe("ignore");
 });
 
@@ -115,7 +118,11 @@ test("the probe step runs when either of its two inputs is set", () => {
   expect(when).toContain("probe-timeout");
 });
 
-test("the ramp runs the k6 this repo pinned, not whatever the machine has", async () => {
+test("the ramp's k6 is fetched by version and archive checksum", async () => {
+  // What this holds is the wiring and the pin, not the identity of the binary
+  // that arrives: `sha256sum` is itself found on PATH, so the checksum is a
+  // contract only while the search path is the one the calling job read. The
+  // case below is where that half is held.
   const ramp = rampStep();
   expect(textAt(ramp, "run")).toContain("k6.sh");
 
@@ -140,8 +147,17 @@ test("the job hands the serving gate every input it declares, each under its own
     Object.keys(passed).toSorted(),
   );
   // An input handed on under a neighbour's name is a setting the consumer wrote
-  // with a wrong answer beside it, and no run shows it.
+  // with a wrong answer beside it, and no run shows it. The two pins are the
+  // exception and the only one: they are not the caller's to write at all — the
+  // job reads them for itself before the graded repo runs, which is what makes
+  // them worth having.
+  const PINNED = new Map([
+    ["bun", "${{ steps.pinned.outputs.bun }}"],
+    ["path", "${{ steps.pinned.outputs.path }}"],
+  ]);
   const crossed = Object.entries(passed).filter(([name, value]) => {
+    const pinned = PINNED.get(name);
+    if (pinned !== undefined) return value !== pinned;
     const reference = new RegExp(`inputs(?:\\.${name}(?![\\w-])|\\[(['"])${name}\\1\\])`, "u");
     return typeof value !== "string" || !reference.test(value);
   });
@@ -160,4 +176,42 @@ test("the floor is decided by the step that ramps, not by one behind it", () => 
 
   // And nothing after it: the ramp is the last thing the action does.
   expect(stepsOf(serving).at(-1)).toEqual(rampStep());
+});
+
+test("every step runs in the action's own checkout, under the interpreter and path its caller pinned", () => {
+  // The three things a graded repo could otherwise choose about a gate that
+  // runs inside its job: which `bunfig.toml` the interpreter reads on the way
+  // up, which `bun` that is, and which `curl`, `tar`, `sha256sum`, `setsid` and
+  // `bash` everything else resolves to. `serving-steps.test.ts` drives the
+  // shipped blocks against a checkout that fights back; this holds the
+  // declaration every one of them depends on, including for a step no case
+  // there can reach without spending a network fetch.
+  for (const step of stepsOf(serving)) {
+    const name = textAt(step, "name") ?? "(unnamed)";
+    const env = mapAt(step, "env");
+    expect(`${name}: ${textAt(step, "working-directory")}`).toBe(
+      `${name}: \${{ github.action_path }}`,
+    );
+    expect(`${name}: ${textAt(env, "INPUT_BUN")}`).toBe(`${name}: \${{ inputs.bun }}`);
+    expect(`${name}: ${textAt(env, "PATH")}`).toBe(`${name}: \${{ inputs.path }}`);
+    // The project reaches the gate as a value rather than as the place it was
+    // run, and `github.workspace` is an expression context no step can write.
+    expect(`${name}: ${textAt(env, "INPUT_PROJECT")}`).toContain("github.workspace");
+    expect(`${name}: ${textAt(step, "run")}`).toContain("gate.sh");
+  }
+});
+
+test("the caller reads the interpreter and the path before the graded repo runs", () => {
+  const steps = jobSteps();
+  const at = (matches: (step: Foreign) => boolean): number => steps.findIndex((s) => matches(s));
+
+  const pinned = at((step) => textAt(step, "id") === "pinned");
+  const install = at((step) => (textAt(step, "run") ?? "").includes("bun install"));
+  const gate = at((step) => (textAt(step, "uses") ?? "").includes("db-serving"));
+
+  // Order is the whole of the argument: a value read after the graded repo's
+  // own install scripts have run is a value that repo could have rewritten.
+  expect(pinned).toBeGreaterThan(-1);
+  expect(pinned).toBeLessThan(install);
+  expect(install).toBeLessThan(gate);
 });

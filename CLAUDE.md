@@ -74,6 +74,15 @@ that has been improved says so at the line that improved it.
   `annotations.ts` (the log protocol and the run summary), `foreign.ts` (the one
   place a document nobody here wrote is narrowed) and `allowlist.ts` (the one
   place an escape hatch is made to carry its reason).
+- **A gate step takes nothing from the repository it grades.** It runs in the
+  action's own checkout — `bun` reads a `bunfig.toml` `preload` from its working
+  directory, and a graded repo's is not the gate's to run — under an interpreter
+  and a search path the calling job read before that repo's install scripts,
+  build or migrator could rewrite either. `check.yml`'s `pinned` step is where
+  they are read, `db-serving/gate.sh` is where they are refused when empty, and
+  the project reaches the gate as a path rather than as the place it was run.
+  Anything a new gate resolves by name — a binary, a config, a database URL —
+  belongs on that list.
 - The evidence artifact belongs to the **job**, not to either action — the
   upload step in `check.yml` says why, and is where `db-gate-evidence` is read.
   What that costs a new gate: a file it leaves in the runner goes on that step's
@@ -92,8 +101,17 @@ that has been improved says so at the line that improved it.
   from the shipped YAML rather than transcribed, with the environment derived
   from its own `env:` block — over the whole truth table of the rule this
   workflow adds. `serving-job.test.ts` grades the wiring no gate can see from
-  inside: which steps the job runs, what the app is given, and whether every
-  file a step leaves in the runner is actually uploaded. The rest of the suite
+  inside: which steps the job runs, what the app is given, whether every file a
+  step leaves in the runner is actually uploaded, and that every step declares
+  the two pins above. `serving-steps.test.ts` runs the shipped `run:` blocks
+  against a checkout that fights back — a `bunfig.toml` preloading its own code,
+  a `bun` of its own first on PATH — through the harness in `action-step.ts`.
+  (The sibling gate's branch carries the same harness inline for its one-step
+  actions; collapsing the two is a merge, not a decision.) `entrypoints.test.ts`
+  is the one lane that runs what GitHub runs: every `*.main.ts` as a process,
+  under a wall clock, asserting it **ends** — the property no in-process test
+  can see, and the one a gate that starts a long-lived app gets wrong. The rest
+  of the suite
   drives the gates against the real thing — MariaDB containers it starts and
   removes itself, and a real app process on a real port — which is why `ci.yml`
   sets `test-network`.

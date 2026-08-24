@@ -14,11 +14,19 @@
  *
  * `setsid` is util-linux, on every runner this gate targets. A command meaning
  * to leave something running behind it will not: that is the trade a bound is.
+ *
+ * Killing the group is not the whole of letting go, which is what `capturing`
+ * below is for.
  */
+
+/** A command as its own process group, so that a kill can address everything it starts. */
+export function asGroup(argv: readonly string[]): string[] {
+  return ["setsid", ...argv];
+}
 
 /** The shell, as its own process group. The command is shell because a pipe or an `&&` means what it says. */
 export function shellGroup(command: string): string[] {
-  return ["setsid", "bash", "-c", command];
+  return asGroup(["bash", "-c", command]);
 }
 
 /**
@@ -35,4 +43,48 @@ export function killGroup(pid: number): void {
   } catch {
     // The group finished on its own between the decision and here.
   }
+}
+
+/** A child's output, and the way to stop waiting for it. */
+export interface Captured {
+  /** Everything that arrived, whether the stream ended or the read was abandoned. */
+  readonly text: Promise<string>;
+  /** Stop reading and release the pipe. What the child writes after this is gone. */
+  abandon: () => void;
+}
+
+/**
+ * A pipe read this process can put down.
+ *
+ * `new Response(stream).text()` is the shorter way to spell this and it cannot
+ * be undone: the Response locks the stream, so a later `cancel()` throws
+ * `ERR_INVALID_STATE` and the read stays pending forever. That matters here
+ * because a pending read on a child's pipe **keeps Bun's event loop alive**,
+ * and the one case this module exists for is the case where the child is gone
+ * and something it started is still holding the write end. Measured on the
+ * pinned Bun, killing the group and then racing a grace: with the streams owned
+ * by a `Response` the process never exits — `unref()` on the subprocess does
+ * not change that, and neither does cancelling a `Response`-locked stream —
+ * while cancelling the reader below ends it at once.
+ *
+ * So a gate that bounds a child holds the reader itself. The text promise still
+ * resolves after `abandon`, with whatever had arrived.
+ */
+export function capturing(stream: ReadableStream<Uint8Array>): Captured {
+  const reader = stream.getReader();
+  const parts: Uint8Array[] = [];
+  const text = (async (): Promise<string> => {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      parts.push(value);
+    }
+    return Buffer.concat(parts).toString();
+  })();
+  return {
+    text,
+    abandon: () => {
+      void reader.cancel();
+    },
+  };
 }

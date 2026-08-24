@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { join } from "node:path";
 
 import { allowlistFrom } from "../.github/actions/_lib/allowlist.ts";
-import { rampGate, SHIPPED } from "../.github/actions/db-serving/ramp.ts";
+import { RAMP_SECONDS, rampGate, SHIPPED } from "../.github/actions/db-serving/ramp.ts";
 
 import { type Mode, serving } from "./app.ts";
 import { materialise } from "./tree.ts";
@@ -55,6 +55,8 @@ async function ramp(
   };
   const verdict = await rampGate({
     k6: K6,
+    project: root,
+    seconds: RAMP_SECONDS,
     script,
     url: app.url,
     paths,
@@ -134,6 +136,8 @@ test("an app that dies under the ramp fails carrying both what it measured and w
 
   const verdict = await rampGate({
     k6: K6,
+    project: root,
+    seconds: RAMP_SECONDS,
     script,
     url: app.url,
     paths: "",
@@ -191,4 +195,48 @@ test("the allowlist the caller wrote reaches the floor the ramp decides", async 
 
   expect(ran.verdict.problems).toEqual([]);
   expect(ran.verdict.note).toContain("2 allowlisted");
+}, 30_000);
+
+test("a route log that is not one is a problem this step reports, not an exception past it", async () => {
+  // An app whose unmatched-path handler answers 200 — an SPA catch-all — serves
+  // a page on the instrument's path. Parsed after the measurement, that threw
+  // past `publish`: no table, no k6 output, and the failure bound's own
+  // diagnostic lost, under a bare `JSON Parse error` naming neither the app nor
+  // which of the two reads it was.
+  const ran = await ramp({ summary: REFUSED }, "html-catch-all");
+
+  expect(ran.verdict.problems).toHaveLength(1);
+  expect(ran.verdict.problems[0]).toContain("the route log read before the ramp answered");
+  expect(ran.verdict.problems[0]).toContain("is not a route log");
+  expect(ran.verdict.problems[0]).toContain("a catch-all that answers every unmatched path");
+  // Before the run rather than after paying for it: the first read is what this
+  // refuses, so k6 was never spawned.
+  expect(await Bun.file(ran.summary).exists()).toBe(false);
+}, 30_000);
+
+test("a ramp that wedges is killed at its bound rather than spending the job", async () => {
+  const root = await materialise({});
+  const app = await serving(root, "serving");
+  const script = join(root, "plan.json");
+  await Bun.write(script, JSON.stringify({ summary: CAPTURED, wedge: true }));
+
+  const started = Date.now();
+  const verdict = await rampGate({
+    k6: K6,
+    project: root,
+    // The shipped bound is ten minutes and the argument for it is in ramp.ts;
+    // what this case is about is that there is one at all.
+    seconds: 2,
+    script,
+    url: app.url,
+    paths: "",
+    allowlist: allowlistFrom("", "route-allowlist"),
+    before: join(root, "before.json"),
+    after: join(root, "after.json"),
+    summary: join(root, "capacity.json"),
+  });
+
+  expect(verdict.problems).toHaveLength(1);
+  expect(verdict.problems[0]).toContain("still running after 2s and was killed");
+  expect(Date.now() - started).toBeLessThan(20_000);
 }, 30_000);
