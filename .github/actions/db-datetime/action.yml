@@ -1,0 +1,31 @@
+name: MariaDB DATETIME gate
+description: >-
+  Asks the database the replay just built which of its columns are DATETIME —
+  the type that stores wall-clock digits with no zone — and requires a reasoned
+  allowlist entry for each. DATABASE_URL is read from the environment: the
+  caller declares the service, so it owns the URL, and one value means no two
+  steps can disagree about which database was graded. docs/gates/db-datetime.md
+  is what this proves and what it cannot catch.
+
+inputs:
+  datetime-allowlist:
+    description: >-
+      The columns whose value really is a wall-clock reading rather than an
+      instant, as `table.column -- why` entries, one per line — an identifier
+      may itself contain a space. A bare `table.column` because MySQL and
+      MariaDB have no schemas within a database: the schema IS the database, and
+      this gate reads one. The reason is part of the entry, the price a lint
+      directive pays. An entry naming a column the database does not have, or
+      one that is no longer DATETIME, is refused rather than kept.
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - name: Every instant carries its zone
+      shell: bash
+      env:
+        INPUT_DATETIME_ALLOWLIST: ${{ inputs['datetime-allowlist'] }}
+      run: |
+        set -euo pipefail
+        bun "$GITHUB_ACTION_PATH/datetime.main.ts"

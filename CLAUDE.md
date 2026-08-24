@@ -22,11 +22,13 @@ second implementation here.
 **The one carve-out: the gate library.** A composite action runs from a checkout
 of its own repo with no `node_modules` above it, and `.github/` is outside
 dev-config's `files` allowlist — so nothing under `.github/actions/` here can
-import from the dev-config this repo installs, by any route. Three files
+import from the dev-config this repo installs, by any route. Four files
 therefore carry checked-in copies of theirs at the pinned SHA, and each says so
 in its own header with its deltas named: `_lib/annotations.ts` (the writing half
-of their `_lib/gate.ts`), `_lib/foreign.ts` (its narrowing half), and the three
-functions `db-replay/database.ts` names (`databaseIn`, `migrate`, `rowsIn`). [dev-config#69](https://github.com/gokayo43/dev-config/issues/69) is
+of their `_lib/gate.ts`), `_lib/foreign.ts` (its narrowing half),
+`_lib/allowlist.ts` (its allowlist half — how an entry is read, what a reason
+costs, and how a waiver standing for nobody is refused), and the four functions
+`db-replay/database.ts` names (`databaseIn`, `migrate`, `rowsIn`, `textIn`). [dev-config#69](https://github.com/gokayo43/dev-config/issues/69) is
 where ending that is argued.
 
 The carve-out is for what the runtime makes unreachable, and nothing else. It is
@@ -42,21 +44,25 @@ that has been improved says so at the line that improved it.
 - `.github/workflows/check.yml` — the wrapper consumers call. Three jobs: the
   call into dev-config's `check.yml` with `database: false`, the always-running
   `refusals` job that fails a call asking for a database-job input without the
-  job, and `replay` (`#2`). The remaining MariaDB database jobs land beside them
-  (`#3`–`#6`), each with the composite action that runs it, its own suite, and
-  its page under `docs/gates/` — the shape dev-config's "Adding a gate"
-  describes.
+  job, and `replay` (`#2`), which carries the DATETIME gate (`#5`) as a step
+  after it — that gate grades the catalogue the migrations built, so it runs
+  where that schema is. The remaining MariaDB database jobs land beside them
+  (`#3`, `#4`, `#6`), each with the composite action that runs it, its own
+  suite, and its page under `docs/gates/` — the shape dev-config's "Adding a
+  gate" describes.
 - `.github/workflows/ci.yml` — this repo's own gate, which is dev-config's
   `check.yml` called directly. It cannot be the wrapper: a commit cannot pin its
   own SHA, so the wrapper's pin is always one commit behind whatever is under
   review.
-- `.github/actions/` — the gates themselves, one directory per job, each a
+- `.github/actions/` — the gates themselves, one directory per gate, each a
   `<name>.ts` the suite drives and a `<name>.main.ts` the action runs. Beside
-  them: `db-replay/database.ts` is everything that talks to a server, and
-  `db-replay/schema.ts` is the pure comparison two schemas go through — split so
-  that `#3`–`#6` can reuse the second without the first. `_lib/` is what every
-  action shares: `annotations.ts` (the log protocol) and `foreign.ts` (the one
-  place a document nobody here wrote is narrowed).
+  them: `db-replay/database.ts` is everything that talks to a server —
+  `db-datetime` reads its catalogue through that and opens no connection of its
+  own — and `db-replay/schema.ts` is the pure comparison two schemas go through,
+  split so that `#3`, `#4` and `#6` can reuse the second without the first.
+  `_lib/` is what every action shares: `annotations.ts` (the log protocol),
+  `foreign.ts` (the one place a document nobody here wrote is narrowed) and
+  `allowlist.ts` (how an allowlist input is read and what a dead entry costs).
 - `tests/` — what CI cannot see from outside. `wrapper-inputs.test.ts` grades
   the wrapper and the README against the dev-config in `node_modules`, which is
   the commit the workflows call: every input the wrapper hands on reaches the

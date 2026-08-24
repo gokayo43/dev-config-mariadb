@@ -6,7 +6,7 @@ import { root, WRAPPER, wrapperDocument } from "./workflow.ts";
 
 /**
  * The one behavioural rule the wrapper itself adds, rather than delegating: a
- * call that asks for an input aimed at the replay job without asking for the
+ * call that asks for an input aimed at a database job without asking for the
  * job is refused instead of ignored. Being quietly ignored is how a gate
  * somebody asked for turns out never to have run, and this is the only place
  * that rule exists.
@@ -37,11 +37,23 @@ interface Ran {
   readonly output: string;
 }
 
-/** The step under bash, with the two variables its `env:` block maps in. */
-async function ran(database: string, evidence: string): Promise<Ran> {
+/** A call, as the variables the step's `env:` block maps in — each defaulting to what a caller who omitted it sends. */
+interface Call {
+  readonly database: string;
+  readonly evidence?: string;
+  readonly allowlist?: string;
+}
+
+/** The step under bash, with the variables its `env:` block maps in. */
+async function ran({ database, evidence = "", allowlist = "" }: Call): Promise<Ran> {
   const proc = Bun.spawn(["bash", "-c", STEP], {
     cwd: root,
-    env: { ...process.env, DATABASE: database, DB_GATE_EVIDENCE: evidence },
+    env: {
+      ...process.env,
+      DATABASE: database,
+      DB_GATE_EVIDENCE: evidence,
+      DATETIME_ALLOWLIST: allowlist,
+    },
     stdout: "pipe",
     stderr: "pipe",
   });
@@ -60,7 +72,7 @@ async function ran(database: string, evidence: string): Promise<Ran> {
  * use it.
  */
 test("the evidence name is refused only when the job that would upload it is off", async () => {
-  const refused = await ran("false", "db-replay-evidence-mariadb");
+  const refused = await ran({ database: "false", evidence: "db-replay-evidence-mariadb" });
 
   expect(refused.status).toBe(1);
   expect(refused.output).toContain("::error::db-gate-evidence needs database: true");
@@ -68,24 +80,63 @@ test("the evidence name is refused only when the job that would upload it is off
 });
 
 test("asking for the job and the artifact name together is what the input is for", async () => {
-  const allowed = await ran("true", "db-replay-evidence-mariadb");
+  const allowed = await ran({ database: "true", evidence: "db-replay-evidence-mariadb" });
 
   expect(allowed.status).toBe(0);
   expect(allowed.output).not.toContain("::error::");
 });
 
 test("a call that asks for neither passes, which is every consumer that has not adopted", async () => {
-  const quiet = await ran("false", "");
+  const quiet = await ran({ database: "false" });
 
   expect(quiet.status).toBe(0);
   expect(quiet.output).not.toContain("::error::");
 });
 
 test("a call that asks for the job and lets the artifact name default passes", async () => {
-  const defaulted = await ran("true", "");
+  const defaulted = await ran({ database: "true" });
 
   expect(defaulted.status).toBe(0);
   expect(defaulted.output).not.toContain("::error::");
+});
+
+/**
+ * The same rule for the second input aimed at these jobs, and it is a rule
+ * rather than a habit: an allowlist waiving columns of a database no job of
+ * this call builds is a waiver nothing will ever read, and a caller who wrote
+ * one is owed the news rather than the silence.
+ */
+test("the DATETIME allowlist is refused only when the jobs whose columns it waives are off", async () => {
+  const refused = await ran({ database: "false", allowlist: "shop.opens_at -- the shop's clock" });
+
+  expect(refused.status).toBe(1);
+  expect(refused.output).toContain("::error::datetime-allowlist needs database: true");
+  expect(refused.output).toContain("waives columns of the database the MariaDB jobs build");
+});
+
+test("asking for the jobs and waiving a column together is what the input is for", async () => {
+  const allowed = await ran({ database: "true", allowlist: "shop.opens_at -- the shop's clock" });
+
+  expect(allowed.status).toBe(0);
+  expect(allowed.output).not.toContain("::error::");
+});
+
+/**
+ * Both wrong inputs in one call earn both diagnostics. The most plausible wrong
+ * implementation of a guard that has grown a second rule is a chain that stops
+ * at the first — which costs the caller a CI round-trip per input, and hides
+ * how many of them were aimed at a job that is off.
+ */
+test("a call carrying every misplaced input is told about every one of them", async () => {
+  const refused = await ran({
+    database: "false",
+    evidence: "db-replay-evidence-mariadb",
+    allowlist: "shop.opens_at -- the shop's clock",
+  });
+
+  expect(refused.status).toBe(1);
+  expect(refused.output).toContain("::error::db-gate-evidence needs database: true");
+  expect(refused.output).toContain("::error::datetime-allowlist needs database: true");
 });
 
 /**

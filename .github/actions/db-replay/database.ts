@@ -9,9 +9,9 @@ import { type Foreign, isForeign, isList, kindOf, textAt } from "../_lib/foreign
  * read back as text. Comparing two of them is `schema.ts`, which is pure and
  * kept out of here for that reason.
  *
- * **Three functions below are checked-in copies of dev-config's
+ * **Four functions below are checked-in copies of dev-config's
  * `.github/actions/db-gate/database.ts` at the pinned SHA**, not independent
- * work: `databaseIn`, `migrate` and `rowsIn` (theirs is `rows`). An action runs
+ * work: `databaseIn`, `migrate`, `rowsIn` (theirs is `rows`) and `textIn`. An action runs
  * from a checkout with no `node_modules` above it and `.github/` is outside
  * dev-config's `files` allowlist, so there is no import that reaches them —
  * dev-config#69 is where publishing them in a reachable form is argued, and
@@ -67,6 +67,49 @@ function rowsIn(answered: unknown, query: string): readonly Foreign[] {
 }
 
 /**
+ * A field a reader needs, or the diagnostic naming what was there instead. The
+ * one narrowing every catalogue read here ends in: a row a driver answered
+ * `any` for is refused field by field, where the query that produced it is
+ * still in hand to name.
+ *
+ * dev-config's, verbatim but for the diagnostic taking `where` as the whole of
+ * its subject rather than composing it from a source and an index — the two
+ * callers here already hold the sentence they want to say.
+ */
+export function textIn(row: Foreign, key: string, where: string): string {
+  const value = textAt(row, key);
+  if (value === undefined) {
+    throw new Error(`${where} has ${key} as ${kindOf(row[key])} rather than text`);
+  }
+  return value;
+}
+
+/**
+ * One query, one connection, and the rows it answered — this repo's own, over
+ * the two copies above.
+ *
+ * A gate here reads a catalogue exactly once and decides on the whole of the
+ * answer: there is no cursor, no page and no second read, so a query that came
+ * up short is not a state any verdict can be built from. Either this returns
+ * every row the server had, or it throws and the step ends without a verdict at
+ * all. The connection is closed on both paths, because a gate whose runtime
+ * stays alive holding a socket costs the job its whole timeout to say what it
+ * already knew.
+ */
+export async function rowsFrom(
+  url: string,
+  query: string,
+  binds: readonly string[],
+): Promise<readonly Foreign[]> {
+  const db = new SQL(url);
+  try {
+    return rowsIn(await db.unsafe(query, [...binds]), query);
+  } finally {
+    await db.close();
+  }
+}
+
+/**
  * The name drizzle's MySQL migrator keeps its journal under, and where it keeps
  * it: a table of that name **in the database being migrated**, with no schema
  * qualifier. Its Postgres migrator puts the same table in a schema of its own,
@@ -97,25 +140,12 @@ export const JOURNAL = "__drizzle_migrations";
  */
 export async function objectsIn(url: string): Promise<string[]> {
   const database = databaseIn(url);
-  const db = new SQL(url);
-  try {
-    const query =
-      "select table_name as name from information_schema.tables where table_schema = ?" +
-      " union all select routine_name from information_schema.routines where routine_schema = ?" +
-      " union all select event_name from information_schema.events where event_schema = ?";
-    const answered = rowsIn(await db.unsafe(query, [database, database, database]), query);
-    return answered.map((row, at) => {
-      const name = textAt(row, "name");
-      if (name === undefined) {
-        throw new Error(
-          `row ${at} of the catalogue has name as ${kindOf(row["name"])} rather than text`,
-        );
-      }
-      return name;
-    });
-  } finally {
-    await db.close();
-  }
+  const query =
+    "select table_name as name from information_schema.tables where table_schema = ?" +
+    " union all select routine_name from information_schema.routines where routine_schema = ?" +
+    " union all select event_name from information_schema.events where event_schema = ?";
+  const answered = await rowsFrom(url, query, [database, database, database]);
+  return answered.map((row, at) => textIn(row, "name", `row ${at} of ${database}'s catalogue`));
 }
 
 /**

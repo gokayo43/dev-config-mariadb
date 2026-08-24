@@ -61,6 +61,16 @@ on:
       db-gate-evidence:
         type: string
         default: ""
+      datetime-allowlist:
+        description: >-
+          The columns of the migrated database whose value really is a
+          wall-clock reading rather than an instant, as `table.column -- why`
+          entries, one per line. An input of this repo's own, and the one
+          dev-config has no name for at all: its gate of this shape is about
+          Postgres's `timestamp without time zone`, and naming this one
+          `timestamp-allowlist` would name the MariaDB type that is fine.
+        type: string
+        default: ""
 
 permissions:
   contents: read
@@ -85,7 +95,7 @@ jobs:
       # dev-config declares at the pin above.
       database: false
 
-  # Every input aimed at the replay job is a request that job would otherwise
+  # Every input aimed at a database job is a request that job would otherwise
   # never see, and a gate nobody notices is off is the worst kind — so a call
   # that asks for one without asking for the job is refused rather than ignored.
   #
@@ -101,6 +111,7 @@ jobs:
       - env:
           DATABASE: ${{ inputs.database }}
           DB_GATE_EVIDENCE: ${{ inputs['db-gate-evidence'] }}
+          DATETIME_ALLOWLIST: ${{ inputs['datetime-allowlist'] }}
         shell: bash
         run: |
           set -euo pipefail
@@ -111,6 +122,9 @@ jobs:
           }
           if [ "$DATABASE" != true ] && [ -n "$DB_GATE_EVIDENCE" ]; then
             refuse "db-gate-evidence needs database: true — it names the artifact the replay job uploads, and this call leaves that job off"
+          fi
+          if [ "$DATABASE" != true ] && [ -n "$DATETIME_ALLOWLIST" ]; then
+            refuse "datetime-allowlist needs database: true — it waives columns of the database the MariaDB jobs build, and this call leaves those jobs off"
           fi
           exit "$wrong"
 
@@ -199,3 +213,11 @@ jobs:
           # renovate: datasource=docker depName=mariadb
           db-image: mariadb:11.4@sha256:4f1d8d202fcf7bcb3902f63af09f9c1a050c2922a89652f22abaec0d4f015e83
           db-gate-evidence: ${{ inputs['db-gate-evidence'] }}
+
+      # After the replay and never before it: this gate grades the catalogue the
+      # migrations produced, so it needs the schema that step builds rather than
+      # one written by hand. Its own pin, because an action and the workflow
+      # pinning it are two commits — CLAUDE.md, "Releasing an action".
+      - uses: gokayo43/dev-config-mariadb/.github/actions/db-datetime@6c4dfef8e47cc2831645a8a4493ffb750e52336f
+        with:
+          datetime-allowlist: ${{ inputs['datetime-allowlist'] }}

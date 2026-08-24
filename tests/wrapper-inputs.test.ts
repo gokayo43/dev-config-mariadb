@@ -23,6 +23,23 @@ const REFUSED = "refused here rather than forwarded";
 
 const INSTALLED = "node_modules/@gokayo43/dev-config/.github/workflows/check.yml";
 
+/**
+ * The inputs this wrapper declares that dev-config has no name for at all.
+ *
+ * Every other input here is dev-config's, either handed on or spelled the way
+ * they spell the same idea — and the tests below hold each of those to their
+ * type and default, so that a consumer moving between the two workflows writes
+ * one call either way. This set is the exception, and it is small on purpose:
+ * an input earns a place in it only when the fact it names is MariaDB's own and
+ * borrowing their spelling would name the wrong thing. `datetime-allowlist` is
+ * the first — their gate of that shape waives Postgres `timestamp without time
+ * zone`, and here TIMESTAMP is the type that is FINE.
+ *
+ * Written out rather than derived, so that adding one is a decision somebody
+ * made rather than a name that stopped matching.
+ */
+const OURS = new Set(["datetime-allowlist"]);
+
 /** What a caller may write beside a called workflow's input name. */
 type Argument = string | boolean;
 
@@ -214,9 +231,10 @@ test("every input the wrapper declares is read by something", () => {
   expect(unread).toEqual([]);
 });
 
-test("every input the wrapper declares is dev-config's, declared exactly as dev-config declares it", () => {
+test("every input the wrapper shares with dev-config is declared exactly as dev-config declares it", () => {
   const differs = Object.entries(inputsOf(wrapper)).filter(
     ([name, { type, default: fallback }]) => {
+      if (OURS.has(name)) return false;
       const theirs = inputsOf(upstream)[name];
       return theirs === undefined || type !== theirs.type || fallback !== theirs.default;
     },
@@ -230,6 +248,25 @@ test("every input the wrapper declares is dev-config's, declared exactly as dev-
   // between the two workflows writes one call either way, and a name that meant
   // something different here is the trap that shape is worth avoiding.
   expect(differs).toEqual([]);
+});
+
+/**
+ * The other half of that rule, for the inputs dev-config has no name for. Two
+ * things can go wrong with one and neither is visible in the check above: the
+ * name could be one dev-config has since taken — in which case this workflow
+ * and that one now mean different things by one spelling, which is the trap the
+ * check above exists to prevent — or it could be declared in some shape other
+ * than the one every allowlist in the fleet has.
+ */
+test("an input of this repo's own is a name dev-config does not have, in the shape the fleet gives an allowlist", () => {
+  for (const name of OURS) {
+    expect(`dev-config declares ${name}: ${name in inputsOf(upstream)}`).toBe(
+      `dev-config declares ${name}: false`,
+    );
+    const declared = inputsOf(wrapper)[name];
+    expect(declared?.type).toBe("string");
+    expect(declared?.default).toBe("");
+  }
 });
 
 test("README.md's account of the input surface is dev-config's own", async () => {
@@ -262,10 +299,15 @@ test("README.md's account of the input surface is dev-config's own", async () =>
   // here most able to go quietly out of date: an input dev-config adds and this
   // page names in neither place is one nobody decided about. Nothing is
   // subtracted from dev-config's surface any more — `database` was, while this
-  // wrapper had no job of its own to turn on, and it is now on the table.
-  expect([...tabled.map(([name]) => name), ...refused].toSorted(alphabetically)).toEqual(
-    Object.keys(inputsOf(upstream)).toSorted(alphabetically),
-  );
+  // wrapper had no job of its own to turn on, and it is now on the table. What
+  // is subtracted from THIS page's table is `OURS`: a name dev-config has never
+  // had cannot be accounted for against their surface, and the test above is
+  // what holds each of those to being exactly that.
+  expect(
+    [...tabled.map(([name]) => name).filter((name) => !OURS.has(name)), ...refused].toSorted(
+      alphabetically,
+    ),
+  ).toEqual(Object.keys(inputsOf(upstream)).toSorted(alphabetically));
 });
 
 test("the call turns dev-config's database job off with a literal, whatever the caller asked for", () => {
