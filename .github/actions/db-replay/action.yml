@@ -19,16 +19,13 @@ inputs:
       needs. Required, and deliberately without a default: a default here would
       be a second place the caller's choice of server is written down.
     required: true
-  db-gate-evidence:
-    description: >-
-      The artifact name for the two schema dumps this gate compared. A matrix
-      that runs more than one leg MUST give each its own: an artifact name may
-      be claimed once per run, the default below is a constant, and the second
-      leg to upload fails on the duplicate. Empty takes that default, so a
-      caller can pass this straight through without having to know how "unset"
-      is spelled.
-    default: ""
 
+# The two dumps this step writes are uploaded by the job rather than by this
+# action. One job builds one database, replays onto it and then runs an app
+# against it, so one upload carries the whole of what happened to it — an
+# artifact name may be claimed once per run, and two actions each publishing
+# under the caller's one name would be the second of them failing on the
+# duplicate. check.yml's own upload step is where that name is read.
 runs:
   using: composite
   steps:
@@ -42,23 +39,3 @@ runs:
       run: |
         set -euo pipefail
         bun "$GITHUB_ACTION_PATH/replay.main.ts"
-
-    # The two dumps, which are deleted with the runner. A run that failed on the
-    # comparison is exactly when they are worth having, and a cancelled one has
-    # nothing to say.
-    #
-    # `.schema` rather than `.sql`, for what they are: what the step compared,
-    # with each table's AUTO_INCREMENT counter taken out. Feeding one back would
-    # build a database whose counters start over.
-    - name: Publish the schemas this gate compared
-      if: ${{ !cancelled() }}
-      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-      with:
-        # The one place this name is defaulted, so that a caller passing an
-        # empty string through is the same as a caller not asking for one.
-        name: ${{ inputs['db-gate-evidence'] || 'db-replay-evidence' }}
-        path: |
-          ${{ runner.temp }}/replay-from-empty.schema
-          ${{ runner.temp }}/replay-again.schema
-        # The second is written by a step that may not have been reached.
-        if-no-files-found: ignore

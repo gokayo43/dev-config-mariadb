@@ -1,12 +1,12 @@
 import { expect, test } from "bun:test";
 
-import { isList, mapAt, textAt } from "../.github/actions/_lib/foreign.ts";
+import { type Foreign, isList, mapAt, textAt } from "../.github/actions/_lib/foreign.ts";
 
 import { root, WRAPPER, wrapperDocument } from "./workflow.ts";
 
 /**
  * The one behavioural rule the wrapper itself adds, rather than delegating: a
- * call that asks for an input aimed at the replay job without asking for the
+ * call that asks for an input aimed at the database job without asking for the
  * job is refused instead of ignored. Being quietly ignored is how a gate
  * somebody asked for turns out never to have run, and this is the only place
  * that rule exists.
@@ -17,19 +17,18 @@ import { root, WRAPPER, wrapperDocument } from "./workflow.ts";
  * refuses what it claims to — and would go green against a workflow that had
  * stopped carrying it at all.
  */
-const STEP = await (async (): Promise<string> => {
+const STEP = await (async (): Promise<{ readonly script: string; readonly env: Foreign }> => {
   const jobs = mapAt(await wrapperDocument(), "jobs");
   const steps = mapAt(jobs, "refusals")["steps"];
-  const scripts = (isList(steps) ? steps : [])
-    .map((step) => textAt(step, "run"))
-    .filter((run): run is string => run !== undefined);
-  const [script, ...rest] = scripts;
+  const found = (isList(steps) ? steps : []).filter((step) => textAt(step, "run") !== undefined);
+  const [step, ...rest] = found;
+  const script = textAt(step, "run");
   if (script === undefined || rest.length > 0) {
     throw new Error(
-      `${WRAPPER} must have a 'refusals' job with exactly one run step, and has ${scripts.length} — that job is the only thing refusing a database-job input passed without the job`,
+      `${WRAPPER} must have a 'refusals' job with exactly one run step, and has ${found.length} — that job is the only thing refusing a database-job input passed without the job`,
     );
   }
-  return script;
+  return { script, env: mapAt(step, "env") };
 })();
 
 interface Ran {
@@ -37,11 +36,45 @@ interface Ran {
   readonly output: string;
 }
 
-/** The step under bash, with the two variables its `env:` block maps in. */
-async function ran(database: string, evidence: string): Promise<Ran> {
-  const proc = Bun.spawn(["bash", "-c", STEP], {
+/** `${{ inputs.build }}` and `${{ inputs['health-url'] }}` are one reference written two ways. */
+const REFERENCE = /^\$\{\{\s*inputs(?:\.([\w-]+)|\[(['"])([^'"]+)\2\])\s*\}\}$/u;
+
+const DECLARED = mapAt(mapAt(await wrapperDocument(), "on"), "workflow_call")["inputs"];
+
+/** What a caller who wrote nothing gets, which is what the runner puts in the variable. */
+function declaredDefault(name: string): string {
+  const held = mapAt(DECLARED, name)["default"];
+  if (held === undefined) return "";
+  if (typeof held === "string") return held;
+  if (typeof held === "boolean" || typeof held === "number") return String(held);
+  throw new Error(
+    `the declared default of ${name} is not a value a runner could put in a variable`,
+  );
+}
+
+/**
+ * The step under bash, with the environment the runner would give it: every
+ * name its own `env:` block declares, an expression standing for the input's
+ * declared default and a literal standing for itself.
+ *
+ * Derived from the shipped block rather than listed here, and that is the
+ * point twice over. The body runs under `set -u`, so an input added to the
+ * guard and forgotten here would fail every case over an unbound variable
+ * rather than one case over the rule — and an input whose default is not empty
+ * is only refused correctly if the case starts from the value a caller who
+ * wrote nothing would have.
+ */
+async function ran(over: Readonly<Record<string, string>>): Promise<Ran> {
+  const env: Record<string, string> = {};
+  for (const [name, value] of Object.entries(STEP.env)) {
+    const written = typeof value === "string" ? value : "";
+    const reference = REFERENCE.exec(written);
+    const input = reference?.[1] ?? reference?.[3];
+    env[name] = input === undefined ? written : declaredDefault(input);
+  }
+  const proc = Bun.spawn(["bash", "-c", STEP.script], {
     cwd: root,
-    env: { ...process.env, DATABASE: database, DB_GATE_EVIDENCE: evidence },
+    env: { ...process.env, ...env, ...over },
     stdout: "pipe",
     stderr: "pipe",
   });
@@ -53,39 +86,104 @@ async function ran(database: string, evidence: string): Promise<Ran> {
 }
 
 /**
- * The whole truth table, because the interesting half of this rule is what it
- * does NOT refuse. A guard that fires on every call is one somebody turns off,
- * and a guard that fires on the combination a consumer legitimately writes —
- * the input, with the job it belongs to — would refuse the only correct way to
- * use it.
+ * Every input this workflow declares for its own job, by the variable the guard
+ * reads it under. The whole truth table is asked of each: refused without the
+ * job, and — the interesting half — not refused with it, since a guard that
+ * fires on the only correct way to use an input is a guard somebody turns off.
  */
-test("the evidence name is refused only when the job that would upload it is off", async () => {
-  const refused = await ran("false", "db-replay-evidence-mariadb");
+const AIMED_AT_THE_JOB = [
+  ["DB_GATE_EVIDENCE", "db-gate-evidence", "mariadb-evidence"],
+  ["PROBE_COMMAND", "probe-command", "bun run scripts/probe.ts"],
+  ["CAPACITY_SCRIPT", "capacity-script", "scripts/ramp.js"],
+  ["CAPACITY_PATH", "capacity-path", "/api/things"],
+  [
+    "ROUTE_ALLOWLIST",
+    "route-allowlist",
+    "OPTIONS /* -- the cors plugin answers before a route does",
+  ],
+  ["START_COMMAND", "start-command", "bun run serve"],
+  ["HEALTH_URL", "health-url", "http://localhost:8080/health"],
+] as const;
 
-  expect(refused.status).toBe(1);
-  expect(refused.output).toContain("::error::db-gate-evidence needs database: true");
-  expect(refused.output).toContain("names the artifact the replay job uploads");
-});
+for (const [variable, input, value] of AIMED_AT_THE_JOB) {
+  test(`${input} without the job it drives is refused rather than ignored`, async () => {
+    const refused = await ran({ DATABASE: "false", [variable]: value });
 
-test("asking for the job and the artifact name together is what the input is for", async () => {
-  const allowed = await ran("true", "db-replay-evidence-mariadb");
+    expect(refused.status).toBe(1);
+    expect(refused.output).toContain(`::error::${input} needs database: true`);
+  });
 
-  expect(allowed.status).toBe(0);
-  expect(allowed.output).not.toContain("::error::");
-});
+  test(`${input} with the job it drives is what the input is for`, async () => {
+    const allowed = await ran({ DATABASE: "true", [variable]: value });
+
+    expect(allowed.status).toBe(0);
+    expect(allowed.output).not.toContain("::error::");
+  });
+}
 
 test("a call that asks for neither passes, which is every consumer that has not adopted", async () => {
-  const quiet = await ran("false", "");
+  const quiet = await ran({ DATABASE: "false" });
 
   expect(quiet.status).toBe(0);
   expect(quiet.output).not.toContain("::error::");
 });
 
-test("a call that asks for the job and lets the artifact name default passes", async () => {
-  const defaulted = await ran("true", "");
+test("a call that asks for the job and lets every input default passes", async () => {
+  const defaulted = await ran({ DATABASE: "true" });
 
   expect(defaulted.status).toBe(0);
   expect(defaulted.output).not.toContain("::error::");
+});
+
+/**
+ * The two inputs dev-config's own guard cannot see (dev-config#66). Every other
+ * input aimed at the job defaults to the empty string, so "the caller passed
+ * it" is spelled "non-empty"; these two carry a value, because a consumer
+ * moving between the two workflows writes one call either way and the defaults
+ * are dev-config's. So they are compared with those defaults instead — which
+ * leaves exactly one caller invisible, and the page says so rather than
+ * implying the hole is closed.
+ */
+test("the defaults the guard compares against are the defaults this workflow declares", () => {
+  // Written twice on purpose — a workflow_call input's default is not readable
+  // from a step — so the two statements are held together here instead. A drift
+  // between them refuses every caller or none.
+  expect(STEP.env["START_COMMAND_DEFAULT"]).toBe(declaredDefault("start-command"));
+  expect(STEP.env["HEALTH_URL_DEFAULT"]).toBe(declaredDefault("health-url"));
+});
+
+test("passing those two exactly as they are declared is the one caller this cannot see", async () => {
+  const invisible = await ran({
+    DATABASE: "false",
+    START_COMMAND: declaredDefault("start-command"),
+    HEALTH_URL: declaredDefault("health-url"),
+  });
+
+  // Not a wish: a workflow_call input cannot be asked whether the caller passed
+  // it, and `github.event.inputs` is not populated for one. The value is the
+  // same as the value a caller who wrote nothing gets, so there is nothing left
+  // to tell the two apart.
+  expect(invisible.status).toBe(0);
+});
+
+test("a bound with no probe under it is refused whether or not the job runs", async () => {
+  for (const database of ["true", "false"]) {
+    const refused = await ran({ DATABASE: database, PROBE_TIMEOUT: "30" });
+
+    expect(refused.status).toBe(1);
+    expect(refused.output).toContain("probe-timeout needs probe-command");
+  }
+});
+
+test("a bound with a probe under it is the pair the two inputs are for", async () => {
+  const allowed = await ran({
+    DATABASE: "true",
+    PROBE_COMMAND: "bun run probe",
+    PROBE_TIMEOUT: "30",
+  });
+
+  expect(allowed.status).toBe(0);
+  expect(allowed.output).not.toContain("::error::");
 });
 
 /**

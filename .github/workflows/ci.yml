@@ -33,3 +33,26 @@ jobs:
       # runner's loopback. The sealed lane puts the run in a network namespace
       # with a loopback of its own, which no published port is on.
       test-network: the replay gate's suite drives a MariaDB container on the runner's loopback
+
+  # The one thing `bun test` cannot run: the shipped k6 ramp, under the k6 this
+  # repo pins. A bun test cannot fetch a binary — the suite's lane has no
+  # business doing so — and "it runs inside k6" is why the linter and knip skip
+  # that file, which is not a reason for nothing to have executed it.
+  ramp-script:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Nothing here pushes, and it runs this repo's own scripts in the same
+          # workspace the token would sit in.
+          persist-credentials: false
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+
+      - name: The shipped ramp, under the k6 the ramp step pins
+        run: |
+          set -euo pipefail
+          # shellcheck source=/dev/null
+          . .github/actions/db-serving/k6.sh
+          bun tests/ramp-script.ts

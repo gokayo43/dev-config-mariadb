@@ -52,13 +52,35 @@ on:
         default: ""
       database:
         description: >-
-          Replay the repo's own migrations onto an empty MariaDB, twice, and
-          compare the schema either side. This is a job of this repo's own and
-          this input never reaches dev-config's check.yml, whose job of that
-          name is Postgres.
+          Replay the repo's own migrations onto an empty MariaDB, twice, compare
+          the schema either side, then boot the app against the result, probe it
+          where the repo has a probe, and ramp it. This is a job of this repo's
+          own and this input never reaches dev-config's check.yml, whose job of
+          that name is Postgres.
         type: boolean
         default: false
       db-gate-evidence:
+        type: string
+        default: ""
+      start-command:
+        type: string
+        default: bun run start
+      health-url:
+        type: string
+        default: http://localhost:3000/api/health
+      probe-command:
+        type: string
+        default: ""
+      probe-timeout:
+        type: string
+        default: ""
+      capacity-script:
+        type: string
+        default: ""
+      capacity-path:
+        type: string
+        default: ""
+      route-allowlist:
         type: string
         default: ""
 
@@ -85,7 +107,7 @@ jobs:
       # dev-config declares at the pin above.
       database: false
 
-  # Every input aimed at the replay job is a request that job would otherwise
+  # Every input aimed at the database job is a request that job would otherwise
   # never see, and a gate nobody notices is off is the worst kind — so a call
   # that asks for one without asking for the job is refused rather than ignored.
   #
@@ -101,6 +123,21 @@ jobs:
       - env:
           DATABASE: ${{ inputs.database }}
           DB_GATE_EVIDENCE: ${{ inputs['db-gate-evidence'] }}
+          START_COMMAND: ${{ inputs['start-command'] }}
+          HEALTH_URL: ${{ inputs['health-url'] }}
+          PROBE_COMMAND: ${{ inputs['probe-command'] }}
+          PROBE_TIMEOUT: ${{ inputs['probe-timeout'] }}
+          CAPACITY_SCRIPT: ${{ inputs['capacity-script'] }}
+          CAPACITY_PATH: ${{ inputs['capacity-path'] }}
+          ROUTE_ALLOWLIST: ${{ inputs['route-allowlist'] }}
+          # The two inputs above that carry a non-empty default, written out a
+          # second time so the guard below has something to compare against.
+          # tests/refusals.test.ts holds these two to the defaults declared at
+          # the top of this file; a workflow_call input cannot be asked whether
+          # the caller passed it, and `github.event.inputs` is not populated for
+          # one, so "the caller wrote this" has no other spelling here.
+          START_COMMAND_DEFAULT: bun run start
+          HEALTH_URL_DEFAULT: http://localhost:3000/api/health
         shell: bash
         run: |
           set -euo pipefail
@@ -110,7 +147,44 @@ jobs:
             wrong=1
           }
           if [ "$DATABASE" != true ] && [ -n "$DB_GATE_EVIDENCE" ]; then
-            refuse "db-gate-evidence needs database: true — it names the artifact the replay job uploads, and this call leaves that job off"
+            refuse "db-gate-evidence needs database: true — it names the artifact the database job uploads, and this call leaves that job off"
+          fi
+          if [ "$DATABASE" != true ] && [ -n "$PROBE_COMMAND" ]; then
+            refuse "probe-command needs database: true — the probe runs against the app the database job boots, and this call leaves that job off"
+          fi
+          if [ "$DATABASE" != true ] && [ -n "$PROBE_TIMEOUT" ]; then
+            refuse "probe-timeout needs database: true — it bounds a probe the database job runs, and this call leaves that job off"
+          fi
+          if [ "$DATABASE" != true ] && [ -n "$CAPACITY_SCRIPT" ]; then
+            refuse "capacity-script needs database: true — the ramp runs against the app the database job boots, and this call leaves that job off"
+          fi
+          if [ "$DATABASE" != true ] && [ -n "$CAPACITY_PATH" ]; then
+            refuse "capacity-path needs database: true — the ramp runs against the app the database job boots, and this call leaves that job off"
+          fi
+          if [ "$DATABASE" != true ] && [ -n "$ROUTE_ALLOWLIST" ]; then
+            refuse "route-allowlist needs database: true — the route floor is measured across the database job's ramp, and this call leaves that job off"
+          fi
+          # Compared with their defaults rather than tested for emptiness, which
+          # is the whole of what these two can be asked. Every other input aimed
+          # at the job defaults to "", so non-empty IS "the caller passed it";
+          # these two carry a value, because a consumer moving between this
+          # workflow and dev-config's writes one call either way and the
+          # defaults are theirs. dev-config#66 is the same two inputs going
+          # unrefused there, where the guard tests for emptiness alone. What
+          # this still cannot see is a caller who passes exactly the default —
+          # docs/gates/db-serving.md names that, rather than papering it over.
+          if [ "$DATABASE" != true ] && [ "$START_COMMAND" != "$START_COMMAND_DEFAULT" ]; then
+            refuse "start-command needs database: true — it is how the database job's boot step starts the app, and this call leaves that job off"
+          fi
+          if [ "$DATABASE" != true ] && [ "$HEALTH_URL" != "$HEALTH_URL_DEFAULT" ]; then
+            refuse "health-url needs database: true — it is what the database job's boot step polls and what its ramp measures, and this call leaves that job off"
+          fi
+          # Asked whatever the job, because it is a fact about the pair rather
+          # than about the job: a bound with no command under it bounds nothing,
+          # and an input that reaches a step which never reads it is the class
+          # every refusal here exists to kill.
+          if [ -z "$PROBE_COMMAND" ] && [ -n "$PROBE_TIMEOUT" ]; then
+            refuse "probe-timeout needs probe-command — it bounds that command, and on its own it bounds nothing"
           fi
           exit "$wrong"
 
@@ -198,4 +272,55 @@ jobs:
         with:
           # renovate: datasource=docker depName=mariadb
           db-image: mariadb:11.4@sha256:4f1d8d202fcf7bcb3902f63af09f9c1a050c2922a89652f22abaec0d4f015e83
-          db-gate-evidence: ${{ inputs['db-gate-evidence'] }}
+
+      # Migrations applying says nothing about whether an app can run against
+      # what they built, a route table answering says nothing about whether any
+      # answer was right, and neither says anything about what the surface does
+      # under load. Same job as the replay above, because the database this
+      # boots against is that job's service container and a second job would get
+      # an empty one. docs/gates/db-serving.md is the page.
+      - uses: gokayo43/dev-config-mariadb/.github/actions/db-serving@0000000000000000000000000000000000000000
+        with:
+          start-command: ${{ inputs['start-command'] }}
+          health-url: ${{ inputs['health-url'] }}
+          probe-command: ${{ inputs['probe-command'] }}
+          probe-timeout: ${{ inputs['probe-timeout'] }}
+          capacity-script: ${{ inputs['capacity-script'] }}
+          capacity-path: ${{ inputs['capacity-path'] }}
+          route-allowlist: ${{ inputs['route-allowlist'] }}
+
+      # Everything the steps above wrote into the runner, which is deleted with
+      # the runner. The upload belongs to the job rather than to either action:
+      # one job builds one database and runs one app against it, an artifact
+      # name may be claimed once per run, and two actions publishing under the
+      # caller's one name would be the second of them failing on the duplicate.
+      #
+      # A step that failed on the way to a number is exactly when its partial
+      # evidence is worth having — the schema a run never got to compare, the
+      # summary of a ramp that died, the output of an app that never answered —
+      # and a cancelled run has nothing to say. Reproducing any of them by
+      # re-running with more printing is the shape of debugging every diagnostic
+      # here exists to avoid, so the files leave the run whatever happened to
+      # it.
+      #
+      # server.log is copied while the app still holds it open, which is not a
+      # race to fix: the ramp needs the process alive, so there is no moment
+      # where the file is finished and the run is not. Read its tail as possibly
+      # torn. The boot step's own annotation, not this file, is what says an app
+      # failed to start.
+      - name: Publish what this job built, measured and read
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          # The one place this name is defaulted, so that a caller passing an
+          # empty string through is the same as a caller not asking for one.
+          name: ${{ inputs['db-gate-evidence'] || 'db-gate-evidence' }}
+          path: |
+            ${{ runner.temp }}/replay-from-empty.schema
+            ${{ runner.temp }}/replay-again.schema
+            ${{ runner.temp }}/server.log
+            ${{ runner.temp }}/capacity.json
+            ${{ runner.temp }}/route-log-before.json
+            ${{ runner.temp }}/route-log-after.json
+          # Each of these is written by a step that may not have been reached.
+          if-no-files-found: ignore

@@ -73,6 +73,13 @@ is the other half of the same issue.
 | `test-suite-evidence` | `string`  |
 | `database`            | `boolean` |
 | `db-gate-evidence`    | `string`  |
+| `start-command`       | `string`  |
+| `health-url`          | `string`  |
+| `probe-command`       | `string`  |
+| `probe-timeout`       | `string`  |
+| `capacity-script`     | `string`  |
+| `capacity-path`       | `string`  |
+| `route-allowlist`     | `string`  |
 
 The first nine are handed to dev-config's `check.yml` unchanged, so
 [its README](https://github.com/gokayo43/dev-config#ci) is the reference for
@@ -81,10 +88,12 @@ here carry no description of their own for that reason — a second copy of that
 prose is a copy that drifts — and the one exception says what dev-config
 cannot: that a consumer of this workflow owes `ci-call`.
 
-The last two are this workflow's own and reach dev-config's `check.yml` under no
-name at all. They are spelled the way dev-config spells the same two, and mean
-here what they mean there against another server: `database` adds the database
-jobs below, and `db-gate-evidence` names the artifact they leave behind. A
+The other nine are this workflow's own and reach dev-config's `check.yml` under
+no name at all. They are spelled the way dev-config spells the same nine, and
+mean here what they mean there against another server: `database` adds the
+database job below, `db-gate-evidence` names the artifact it leaves behind, and
+the seven after them aim its boot, probe and ramp steps —
+[docs/gates/db-serving.md](docs/gates/db-serving.md) is what each one does. A
 consumer that moves between the two workflows writes one call either way.
 
 `tests/wrapper-inputs.test.ts` is what keeps every list on this page honest: it
@@ -93,16 +102,20 @@ and fails on a type or default of this wrapper's own, on an input declared that
 nothing reads, and on a name this page has stopped accounting for.
 
 Every other input dev-config's `check.yml` declares is refused here rather than
-forwarded: `upgrade-gate`, `semantic-fixtures`, `capacity-path`,
-`capacity-script`, `route-allowlist`, `timestamp-allowlist`, `backfill-seed`,
-`backfill-command`, `probe-command`, `probe-timeout`, `start-command` and
-`health-url`. Each is aimed at the Postgres database job or at the app that job
-boots, and this workflow leaves that job off; the jobs below are what will
-answer them for MariaDB. dev-config refuses most of them itself when its
-database job is off, and the last two it cannot, because they carry defaults
-rather than an empty one —
-[dev-config#66](https://github.com/gokayo43/dev-config/issues/66) is that hole,
-and declaring neither of them here is what keeps a consumer out of it.
+forwarded: `upgrade-gate`, `semantic-fixtures`, `timestamp-allowlist`,
+`backfill-seed` and `backfill-command`. Each is aimed at a step of the Postgres
+database job this workflow leaves off, and the jobs below are what will answer
+them for MariaDB.
+
+Passing any input aimed at this repo's own database job without asking for that
+job is refused rather than ignored, which is what the `refusals` job is for.
+`start-command` and `health-url` are the two that cannot be asked that way —
+they carry a default rather than an empty one, so "the caller passed this" has
+no spelling a workflow can read — and
+[dev-config#66](https://github.com/gokayo43/dev-config/issues/66) is the same
+two going unrefused upstream. They are compared with their declared defaults
+here instead; `docs/gates/db-serving.md` names the one caller that leaves
+invisible.
 
 `db-gate-evidence` is asked the same question this workflow's own job can ask:
 passing it with `database: false` fails the run rather than being ignored, since
@@ -113,15 +126,14 @@ as a **matrix** gives each leg its own, and keeps it distinct from
 
 ## The jobs
 
-| Job                       | What it runs                                                                                                                                                                                                                                                                                                     | Status                                                                  |
-| ------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
-| `refusals`                | the one rule this workflow adds rather than delegates: a call asking for an input aimed at a database job, without that job, is refused rather than ignored                                                                                                                                                      | shipped                                                                 |
-| `static`                  | dev-config's `check.yml` with `database: false`: the secret scan, the repo contract, the stack denylist, the workflow lint, suppression hygiene, shell scripts, `format:check` / `lint` / `typecheck` / `knip`, the test suite, and — each where the caller asks for it — the compose lint and the mutation lane | shipped                                                                 |
-| `replay`                  | the repo's `db:migrate` onto an empty MariaDB, twice, compared as normalized schema dumps — [docs/gates/db-replay.md](docs/gates/db-replay.md)                                                                                                                                                                   | shipped                                                                 |
-| boot, probe and ramp      | the app booted against the migrated database, the repo's own probe, and a k6 ramp with the route-coverage floor                                                                                                                                                                                                  | planned ([#3](https://github.com/gokayo43/dev-config-mariadb/issues/3)) |
-| upgrade path and backfill | the base ref's lineage upgraded and compared with a fresh build, and a backfill run twice                                                                                                                                                                                                                        | planned ([#4](https://github.com/gokayo43/dev-config-mariadb/issues/4)) |
-| DATETIME wall clock       | every `DATETIME` column carries a reasoned allowlist entry, MariaDB's half of the ambiguous-instant class                                                                                                                                                                                                        | planned ([#5](https://github.com/gokayo43/dev-config-mariadb/issues/5)) |
-| integration lane          | the repo's DB-touching suite against a real MariaDB and Redis, with the junit report read afterwards                                                                                                                                                                                                             | planned ([#6](https://github.com/gokayo43/dev-config-mariadb/issues/6)) |
+| Job                       | What it runs                                                                                                                                                                                                                                                                                                                   | Status                                                                  |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------- |
+| `refusals`                | the one rule this workflow adds rather than delegates: a call asking for an input aimed at a database job, without that job, is refused rather than ignored                                                                                                                                                                    | shipped                                                                 |
+| `static`                  | dev-config's `check.yml` with `database: false`: the secret scan, the repo contract, the stack denylist, the workflow lint, suppression hygiene, shell scripts, `format:check` / `lint` / `typecheck` / `knip`, the test suite, and — each where the caller asks for it — the compose lint and the mutation lane               | shipped                                                                 |
+| `replay`                  | the repo's `db:migrate` onto an empty MariaDB, twice, compared as normalized schema dumps — [docs/gates/db-replay.md](docs/gates/db-replay.md) — and then, against that database, the app booted, the repo's own probe run, and a k6 ramp with the route-coverage floor — [docs/gates/db-serving.md](docs/gates/db-serving.md) | shipped                                                                 |
+| upgrade path and backfill | the base ref's lineage upgraded and compared with a fresh build, and a backfill run twice                                                                                                                                                                                                                                      | planned ([#4](https://github.com/gokayo43/dev-config-mariadb/issues/4)) |
+| DATETIME wall clock       | every `DATETIME` column carries a reasoned allowlist entry, MariaDB's half of the ambiguous-instant class                                                                                                                                                                                                                      | planned ([#5](https://github.com/gokayo43/dev-config-mariadb/issues/5)) |
+| integration lane          | the repo's DB-touching suite against a real MariaDB and Redis, with the junit report read afterwards                                                                                                                                                                                                                           | planned ([#6](https://github.com/gokayo43/dev-config-mariadb/issues/6)) |
 
 ## Gating this repo
 

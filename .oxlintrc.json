@@ -2,23 +2,25 @@
   "$schema": "https://raw.githubusercontent.com/oxc-project/oxc/main/npm/oxlint/configuration_schema.json",
   "extends": ["./node_modules/@gokayo43/dev-config/oxlint.base.json"],
   "env": { "node": true, "es2024": true },
-  "ignorePatterns": ["node_modules/**"],
+  "ignorePatterns": ["node_modules/**", ".github/actions/db-serving/ramp.js"],
   "overrides": [
     {
       "files": [
         ".github/actions/_lib/foreign.ts",
         ".github/actions/db-replay/database.ts",
+        ".github/actions/db-serving/route-coverage.ts",
         "tests/workflow.ts",
         "tests/wrapper-inputs.test.ts"
       ],
       "rules": {
-        // One of the base's own rules, off for these four files and nowhere
+        // One of the base's own rules, off for these five files and nowhere
         // else. The rule exists to push parsing to the boundary; these ARE the
         // boundary. `foreign.ts` is where a document nobody here wrote gets
-        // narrowed, and the other three walk one before they can reach it — a
-        // YAML node, a recursive descent, a row a driver answered `any` for. A
-        // fifth file wanting this is a decision, which is why the list is
-        // written out rather than globbed.
+        // narrowed, and the others walk one before they can reach it — a YAML
+        // node, a recursive descent, a row a driver answered `any` for, a
+        // route-log payload an app the gate does not own serves. A sixth file
+        // wanting this is a decision, which is why the list is written out
+        // rather than globbed.
         "anti-slop/no-unknown-parameters": "off"
       }
     }

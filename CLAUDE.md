@@ -22,12 +22,25 @@ second implementation here.
 **The one carve-out: the gate library.** A composite action runs from a checkout
 of its own repo with no `node_modules` above it, and `.github/` is outside
 dev-config's `files` allowlist — so nothing under `.github/actions/` here can
-import from the dev-config this repo installs, by any route. Three files
+import from the dev-config this repo installs, by any route. Several files
 therefore carry checked-in copies of theirs at the pinned SHA, and each says so
 in its own header with its deltas named: `_lib/annotations.ts` (the writing half
-of their `_lib/gate.ts`), `_lib/foreign.ts` (its narrowing half), and the three
-functions `db-replay/database.ts` names (`databaseIn`, `migrate`, `rowsIn`). [dev-config#69](https://github.com/gokayo43/dev-config/issues/69) is
-where ending that is argued.
+of their `_lib/gate.ts`), `_lib/foreign.ts` (its narrowing half),
+`_lib/allowlist.ts` (its `-- why` half), the three functions
+`db-replay/database.ts` names (`databaseIn`, `migrate`, `rowsIn`), and what the
+serving gate ports — `db-serving/probe.ts`, `route-coverage.ts`, `capacity.ts`,
+`route-log.ts` and the k6 script `ramp.js`.
+[dev-config#69](https://github.com/gokayo43/dev-config/issues/69) is where
+ending that is argued.
+
+One of those copies is not blind, and it is the shape the rest could take.
+`route-log.ts` is a protocol both ends of a contract need, so dev-config
+publishes it — it is in their `files` allowlist, and a consuming app imports it.
+A **test** resolves `node_modules` normally even though an action cannot, so
+`tests/route-log.test.ts` holds this repo's copy to dev-config's own module and
+fails when either end drifts. The other copies have no published original to be
+held to; `.github/` reaches this repo's install only because a `github:`
+dependency is a full checkout.
 
 The carve-out is for what the runtime makes unreachable, and nothing else. It is
 not licence to fork a gate: an assertion, a diagnostic or a rule that could live
@@ -50,13 +63,22 @@ that has been improved says so at the line that improved it.
   `check.yml` called directly. It cannot be the wrapper: a commit cannot pin its
   own SHA, so the wrapper's pin is always one commit behind whatever is under
   review.
-- `.github/actions/` — the gates themselves, one directory per job, each a
-  `<name>.ts` the suite drives and a `<name>.main.ts` the action runs. Beside
-  them: `db-replay/database.ts` is everything that talks to a server, and
-  `db-replay/schema.ts` is the pure comparison two schemas go through — split so
-  that `#3`–`#6` can reuse the second without the first. `_lib/` is what every
-  action shares: `annotations.ts` (the log protocol) and `foreign.ts` (the one
-  place a document nobody here wrote is narrowed).
+- `.github/actions/` — the gates themselves, each a `<name>.ts` the suite drives
+  and a `<name>.main.ts` the action runs. Two directories so far, both steps of
+  the one database job: `db-replay` (`#2`) and `db-serving` (`#3`, the boot,
+  probe and ramp). Each splits what talks to something from what is pure, so
+  that a verdict can be driven without the thing under it —
+  `db-replay/database.ts` and `db-replay/schema.ts`, `db-serving/ramp.ts` and
+  `db-serving/capacity.ts`. `_lib/` is what every action shares:
+  `annotations.ts` (the log protocol and the run summary), `foreign.ts` (the one
+  place a document nobody here wrote is narrowed) and `allowlist.ts` (the one
+  place an escape hatch is made to carry its reason).
+- The evidence artifact belongs to the **job**, not to either action: one job
+  builds one database and runs one app against it, and an artifact name may be
+  claimed once per run. `check.yml`'s own upload step is where
+  `db-gate-evidence` is read, and a new gate that leaves a file behind adds it
+  to that step's `path` — `tests/serving-job.test.ts` fails when one is written
+  into the runner and left out.
 - `tests/` — what CI cannot see from outside. `wrapper-inputs.test.ts` grades
   the wrapper and the README against the dev-config in `node_modules`, which is
   the commit the workflows call: every input the wrapper hands on reaches the
@@ -68,10 +90,20 @@ that has been improved says so at the line that improved it.
   the four carriers of the dev-config pin agree, the action pin names a commit
   this repo carries, and the server image is written once as far as a reader is
   concerned. `refusals.test.ts` runs the wrapper's own `run:` block — extracted
-  from the shipped YAML rather than transcribed — over the whole truth table of
-  the one behavioural rule this workflow adds. The rest of the suite drives the
-  gates against real MariaDB containers it starts and removes itself, which is
-  why `ci.yml` sets `test-network`.
+  from the shipped YAML rather than transcribed, with the environment derived
+  from its own `env:` block — over the whole truth table of the rule this
+  workflow adds. `serving-job.test.ts` grades the wiring no gate can see from
+  inside: which steps the job runs, what the app is given, and whether every
+  file a step leaves in the runner is actually uploaded. The rest of the suite
+  drives the gates against the real thing — MariaDB containers it starts and
+  removes itself, and a real app process on a real port — which is why `ci.yml`
+  sets `test-network`.
+
+  Two things the suite cannot run, both in `ci.yml` as steps of their own:
+  nothing in `bun test` may fetch a binary, so the shipped k6 ramp is executed
+  by `tests/ramp-script.ts` under the pinned k6 that `k6.sh` fetches. "It runs
+  inside k6" is why the linter and knip skip that script, and it is not a reason
+  for nothing to have run it.
 
 ## The server this repo is written against
 

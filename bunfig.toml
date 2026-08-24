@@ -12,8 +12,8 @@ saveExact = true
 preload = ["./tests/preload.ts"]
 
 # A floor, not a target, applied by the `--coverage` CI passes and by nothing
-# local — dev-config's docs/gates/test-suite.md. It grades the five gate modules
-# under .github/actions that the suite drives; the line below keeps the suite
-# itself out of its own denominator.
+# local — dev-config's docs/gates/test-suite.md. It grades the gate modules under
+# .github/actions that the suite drives; the line below keeps the suite itself
+# out of its own denominator.
 coverageThreshold = { lines = 0.75, functions = 0.75 }
 coverageSkipTestFiles = true

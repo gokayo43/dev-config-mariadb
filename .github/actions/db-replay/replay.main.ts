@@ -10,7 +10,7 @@ await entry(async () => {
   // it first — so it is the one that says what the caller owes.
   const url = required("DATABASE_URL", "the calling job must set it for the database it declared");
 
-  publish(
+  await publish(
     await replayGate({
       // The action ran this from the project it was pointed at, and the
       // migrator is read relative to it.

@@ -137,10 +137,17 @@ passes, and the pass reads exactly like a history that rebuilds.
 ## Evidence
 
 Both schemas leave the run in the artifact `db-gate-evidence` names, defaulting
-to `db-replay-evidence`. Each is written as it is taken rather than after a
-comparison that may never happen — the dump a run never got to compare is
-exactly the evidence somebody wants — so a refusal on the second replay ships
-both, and a refusal on the first ships neither.
+to `db-gate-evidence`, alongside everything the steps after this one left behind
+— [db-serving.md](db-serving.md) lists those. The upload is a step of the job
+rather than of this action: one job builds one database and runs one app against
+it, an artifact name may be claimed once per run, and two actions publishing
+under the caller's one name would be the second of them failing on the
+duplicate.
+
+Each schema is written as it is taken rather than after a comparison that may
+never happen — the dump a run never got to compare is exactly the evidence
+somebody wants — so a refusal on the second replay ships both, and a refusal on
+the first ships neither.
 
 They are named `.schema` rather than `.sql` for what they are: what the step
 compared, with each table's counter taken out. Feeding one back would build a
