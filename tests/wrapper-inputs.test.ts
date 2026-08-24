@@ -23,6 +23,25 @@ const REFUSED = "refused here rather than forwarded";
 
 const INSTALLED = "node_modules/@gokayo43/dev-config/.github/workflows/check.yml";
 
+/** Everything a consumer fetches when it resolves an action pin of this repo. */
+const ACTIONS = ".github/actions";
+
+/**
+ * The inputs this wrapper declares that dev-config has no name for at all.
+ *
+ * Every other input here is dev-config's, either handed on or spelled the way
+ * they spell the same idea — and the tests below hold each of those to their
+ * type and default, so that a consumer moving between the two workflows writes
+ * one call either way. This set is the exception, and it is small on purpose:
+ * an input earns a place in it only when the fact it names is MariaDB's own and
+ * borrowing their spelling would name the wrong thing. `datetime-allowlist` is
+ * the first, and docs/gates/db-datetime.md is why.
+ *
+ * Written out rather than derived, so that adding one is a decision somebody
+ * made rather than a name that stopped matching.
+ */
+const OURS = new Set(["datetime-allowlist"]);
+
 /** What a caller may write beside a called workflow's input name. */
 type Argument = string | boolean;
 
@@ -214,9 +233,10 @@ test("every input the wrapper declares is read by something", () => {
   expect(unread).toEqual([]);
 });
 
-test("every input the wrapper declares is dev-config's, declared exactly as dev-config declares it", () => {
+test("every input the wrapper shares with dev-config is declared exactly as dev-config declares it", () => {
   const differs = Object.entries(inputsOf(wrapper)).filter(
     ([name, { type, default: fallback }]) => {
+      if (OURS.has(name)) return false;
       const theirs = inputsOf(upstream)[name];
       return theirs === undefined || type !== theirs.type || fallback !== theirs.default;
     },
@@ -230,6 +250,25 @@ test("every input the wrapper declares is dev-config's, declared exactly as dev-
   // between the two workflows writes one call either way, and a name that meant
   // something different here is the trap that shape is worth avoiding.
   expect(differs).toEqual([]);
+});
+
+/**
+ * The other half of that rule, for the inputs dev-config has no name for. Two
+ * things can go wrong with one and neither is visible in the check above: the
+ * name could be one dev-config has since taken — in which case this workflow
+ * and that one now mean different things by one spelling, which is the trap the
+ * check above exists to prevent — or it could be declared in some shape other
+ * than the one every allowlist in the fleet has.
+ */
+test("an input of this repo's own is a name dev-config does not have, in the shape the fleet gives an allowlist", () => {
+  for (const name of OURS) {
+    expect(`dev-config declares ${name}: ${name in inputsOf(upstream)}`).toBe(
+      `dev-config declares ${name}: false`,
+    );
+    const declared = inputsOf(wrapper)[name];
+    expect(declared?.type).toBe("string");
+    expect(declared?.default).toBe("");
+  }
 });
 
 test("README.md's account of the input surface is dev-config's own", async () => {
@@ -262,10 +301,15 @@ test("README.md's account of the input surface is dev-config's own", async () =>
   // here most able to go quietly out of date: an input dev-config adds and this
   // page names in neither place is one nobody decided about. Nothing is
   // subtracted from dev-config's surface any more — `database` was, while this
-  // wrapper had no job of its own to turn on, and it is now on the table.
-  expect([...tabled.map(([name]) => name), ...refused].toSorted(alphabetically)).toEqual(
-    Object.keys(inputsOf(upstream)).toSorted(alphabetically),
-  );
+  // wrapper had no job of its own to turn on, and it is now on the table. What
+  // is subtracted from THIS page's table is `OURS`: a name dev-config has never
+  // had cannot be accounted for against their surface, and the test above is
+  // what holds each of those to being exactly that.
+  expect(
+    [...tabled.map(([name]) => name).filter((name) => !OURS.has(name)), ...refused].toSorted(
+      alphabetically,
+    ),
+  ).toEqual(Object.keys(inputsOf(upstream)).toSorted(alphabetically));
 });
 
 test("the call turns dev-config's database job off with a literal, whatever the caller asked for", () => {
@@ -296,17 +340,17 @@ test("this repo is gated by, and installs, the dev-config it hands its consumers
 });
 
 /**
- * The action this repo ships, reached by full path and SHA because a relative
- * `uses:` inside a called workflow resolves against the CALLER's checkout. So
- * the pin names a commit of this repo, and a commit it does not carry is an
- * action GitHub cannot fetch — a database job that fails for every consumer at
- * once, over a value no consumer wrote.
+ * The actions this repo ships, each reached by full path and SHA because a
+ * relative `uses:` inside a called workflow resolves against the CALLER's
+ * checkout. So a pin names a commit of this repo, and a commit it does not
+ * carry is an action GitHub cannot fetch — a database job that fails for every
+ * consumer at once, over a value no consumer wrote.
  *
- * Reachability rather than freshness. Whether the pinned commit is the newest
- * one carrying that action is a release decision; whether it exists at all is
+ * Reachability rather than freshness. Whether a pinned commit is the newest one
+ * carrying that action is a release decision; whether it exists at all is
  * arithmetic, and it is the half that is silently wrong after a squash.
  */
-test("the action the wrapper pins is a commit this repo carries", async () => {
+test("every action the wrapper pins is a commit this repo carries", async () => {
   const pins = [...stringsIn(wrapper.document)].filter((text) => OWN_ACTION.test(text));
   expect(pins).not.toEqual([]);
   for (const pin of pins) {
@@ -317,6 +361,51 @@ test("the action the wrapper pins is a commit this repo carries", async () => {
       stderr: "ignore",
     });
     expect(`${pin} resolves: ${(await proc.exited) === 0}`).toBe(`${pin} resolves: true`);
+  }
+});
+
+/** What git calls the tree of `.github/actions` at a commit, which is every byte a consumer fetches. */
+async function actionsTree(commit: string): Promise<string> {
+  const proc = Bun.spawn(["git", "rev-parse", `${commit}:${ACTIONS}`], {
+    cwd: root,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [id, why] = await Promise.all([
+    new Response(proc.stdout).text(),
+    new Response(proc.stderr).text(),
+  ]);
+  if ((await proc.exited) !== 0)
+    throw new Error(`${commit}:${ACTIONS} is not a tree — ${why.trim()}`);
+  return id.trim();
+}
+
+/**
+ * And it is the CURRENT one, which reachability alone never asked.
+ *
+ * A pin that resolves can still name a commit whose actions have been changed
+ * since — and then a consumer fetches an action this repo reviewed, merged and
+ * moved on from, while every gate here grades the tree at HEAD. Shipped
+ * behaviour and reviewed behaviour part company with nothing red anywhere, and
+ * the older the pin the longer nobody notices: exactly the state this repo was
+ * in when `db-replay` was pinned two changes back.
+ *
+ * The whole directory rather than each action's own, because that is what a
+ * consumer's checkout of a pinned commit contains and what these actions import
+ * across: `db-datetime` reads its catalogue through `db-replay/database.ts` and
+ * both read `_lib/`, so an action's shipped behaviour is not bounded by its own
+ * directory. One tree per pin also means one rule rather than a map of which
+ * directory each pin owns.
+ *
+ * A commit cannot name itself, so the pin is one commit behind by design —
+ * CLAUDE.md, "Releasing an action". Trees are what that costs nothing: the
+ * re-pinning commit touches the workflow and leaves this tree alone.
+ */
+test("every action the wrapper pins ships the actions this repo has now", async () => {
+  const here = await actionsTree("HEAD");
+  for (const pin of [...stringsIn(wrapper.document)].filter((text) => OWN_ACTION.test(text))) {
+    const sha = captured(OWN_ACTION.exec(pin)?.[1], "OWN_ACTION");
+    expect(`${pin} ships ${await actionsTree(sha)}`).toBe(`${pin} ships ${here}`);
   }
 });
 

@@ -6,14 +6,14 @@ minimumReleaseAge = 604800 # 7 days, in seconds
 saveExact = true
 
 [test]
-# The container the replay gate's suite drives lives for the whole run, so the
+# The container the database gates' suites drive lives for the whole run, so the
 # hook that removes it has to be registered outside any one file — a top-level
 # afterAll in an imported module attaches to whichever file imported it first.
 preload = ["./tests/preload.ts"]
 
 # A floor, not a target, applied by the `--coverage` CI passes and by nothing
-# local — dev-config's docs/gates/test-suite.md. It grades the five gate modules
-# under .github/actions that the suite drives; the line below keeps the suite
-# itself out of its own denominator.
+# local — dev-config's docs/gates/test-suite.md. It grades the gate modules under
+# .github/actions that the suite drives; the line below keeps the suite itself
+# out of its own denominator.
 coverageThreshold = { lines = 0.75, functions = 0.75 }
 coverageSkipTestFiles = true

@@ -73,6 +73,7 @@ is the other half of the same issue.
 | `test-suite-evidence` | `string`  |
 | `database`            | `boolean` |
 | `db-gate-evidence`    | `string`  |
+| `datetime-allowlist`  | `string`  |
 
 The first nine are handed to dev-config's `check.yml` unchanged, so
 [its README](https://github.com/gokayo43/dev-config#ci) is the reference for
@@ -81,11 +82,17 @@ here carry no description of their own for that reason — a second copy of that
 prose is a copy that drifts — and the one exception says what dev-config
 cannot: that a consumer of this workflow owes `ci-call`.
 
-The last two are this workflow's own and reach dev-config's `check.yml` under no
-name at all. They are spelled the way dev-config spells the same two, and mean
-here what they mean there against another server: `database` adds the database
-jobs below, and `db-gate-evidence` names the artifact they leave behind. A
-consumer that moves between the two workflows writes one call either way.
+The last three are this workflow's own and reach dev-config's `check.yml` under
+no name at all. The first two are spelled the way dev-config spells the same
+two, and mean here what they mean there against another server: `database` adds
+the database jobs below, and `db-gate-evidence` names the artifact they leave
+behind. A consumer that moves between the two workflows writes one call either
+way.
+
+`datetime-allowlist` is the one input dev-config has no name for, and their
+`timestamp-allowlist` stays refused below rather than standing in for it.
+[docs/gates/db-datetime.md](docs/gates/db-datetime.md) is what this one waives
+and why it is spelled this way.
 
 `tests/wrapper-inputs.test.ts` is what keeps every list on this page honest: it
 reads the dev-config this repo installs — the same commit the workflows call —
@@ -120,7 +127,7 @@ as a **matrix** gives each leg its own, and keeps it distinct from
 | `replay`                  | the repo's `db:migrate` onto an empty MariaDB, twice, compared as normalized schema dumps — [docs/gates/db-replay.md](docs/gates/db-replay.md)                                                                                                                                                                   | shipped                                                                 |
 | boot, probe and ramp      | the app booted against the migrated database, the repo's own probe, and a k6 ramp with the route-coverage floor                                                                                                                                                                                                  | planned ([#3](https://github.com/gokayo43/dev-config-mariadb/issues/3)) |
 | upgrade path and backfill | the base ref's lineage upgraded and compared with a fresh build, and a backfill run twice                                                                                                                                                                                                                        | planned ([#4](https://github.com/gokayo43/dev-config-mariadb/issues/4)) |
-| DATETIME wall clock       | every `DATETIME` column carries a reasoned allowlist entry, MariaDB's half of the ambiguous-instant class                                                                                                                                                                                                        | planned ([#5](https://github.com/gokayo43/dev-config-mariadb/issues/5)) |
+| DATETIME wall clock       | a step of `replay`, after the migrations have built the schema: every `DATETIME` column in the database they built carries a reasoned allowlist entry, MariaDB's half of the ambiguous-instant class — [docs/gates/db-datetime.md](docs/gates/db-datetime.md)                                                    | shipped                                                                 |
 | integration lane          | the repo's DB-touching suite against a real MariaDB and Redis, with the junit report read afterwards                                                                                                                                                                                                             | planned ([#6](https://github.com/gokayo43/dev-config-mariadb/issues/6)) |
 
 ## Gating this repo
@@ -133,7 +140,7 @@ dev-config commit, and the suite fails when they stop agreeing.
 ```sh
 bun install
 bun run check   # format:check + lint + typecheck + knip
-bun test        # needs Docker: the replay gate's suite drives a real MariaDB
+bun test        # needs Docker: the database gates' suites drive a real MariaDB
 ```
 
 The suite starts one MariaDB container per worktree and takes it down again, so

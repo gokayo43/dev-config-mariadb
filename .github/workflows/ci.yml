@@ -28,8 +28,8 @@ jobs:
       # into a file of their own.
       contract-exemptions: secrets
       # Read in review like the reason on a lint directive, and it is about this
-      # suite rather than about the gate: the replay gate's cases each drive a
+      # suite rather than about the gate: the database gates' cases each drive a
       # real MariaDB, which the suite starts as a container and reaches on the
       # runner's loopback. The sealed lane puts the run in a network namespace
       # with a loopback of its own, which no published port is on.
-      test-network: the replay gate's suite drives a MariaDB container on the runner's loopback
+      test-network: the database gates' suites drive a MariaDB container on the runner's loopback
