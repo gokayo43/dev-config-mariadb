@@ -1,0 +1,12 @@
+[install]
+# Supply-chain protection: refuse any version published in the last 7 days, so a
+# compromised release that is detected and yanked within hours never reaches the
+# lockfile. Paired with saveExact for exact, auditable pins.
+minimumReleaseAge = 604800 # 7 days, in seconds
+saveExact = true
+
+[test]
+# A floor, not a target, applied by the `--coverage` CI passes and by nothing
+# local — dev-config's docs/gates/test-suite.md.
+coverageThreshold = { lines = 0.75, functions = 0.75 }
+coverageSkipTestFiles = true

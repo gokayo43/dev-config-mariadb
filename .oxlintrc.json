@@ -1,0 +1,6 @@
+{
+  "$schema": "https://raw.githubusercontent.com/oxc-project/oxc/main/npm/oxlint/configuration_schema.json",
+  "extends": ["./node_modules/@gokayo43/dev-config/oxlint.base.json"],
+  "env": { "node": true, "es2024": true },
+  "ignorePatterns": ["node_modules/**"]
+}

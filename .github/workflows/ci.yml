@@ -1,0 +1,25 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # dev-config's gate over this tree, called directly rather than through this
+  # repo's own check.yml beside it: a commit cannot pin its own SHA, and the
+  # wrapper reaches dev-config by a pin that would be one commit behind whatever
+  # is being reviewed. What the wrapper adds to that call — the pass-through — is
+  # graded by tests/wrapper-inputs.test.ts, which the suite lane below runs.
+  check:
+    uses: gokayo43/dev-config/.github/workflows/check.yml@602fca2f24341ef9c445b4a6f750e887cf156f37 # v0.50.1
+    with:
+      # Nothing here reads an environment at runtime: this repo ships workflows.
+      contract-exemptions: secrets

@@ -1,0 +1,78 @@
+name: Check
+
+# The gate the two MariaDB-bound repos run, called by reference:
+#   jobs.check.uses: gokayo43/dev-config-mariadb/.github/workflows/check.yml@<sha>
+#
+# Everything static is dev-config's, unchanged: this workflow calls that one
+# rather than restating any of it, so a gate lands here when the pin below moves
+# and never because a copy drifted. `database: false` is not a preference —
+# dev-config's database job is Postgres, and the MariaDB jobs this repo adds are
+# what a consumer gets instead.
+on:
+  workflow_call:
+    inputs:
+      # dev-config's own input documentation is the reference for every input
+      # here: each is handed to that workflow unchanged, and a description
+      # restating what it does would be a second copy to drift.
+      build:
+        description: Build before the static gate. Passed through to dev-config's check.yml.
+        type: boolean
+        default: false
+      affected:
+        description: Narrow the typecheck lane to a pull request's changed packages. Passed through to dev-config's check.yml.
+        type: boolean
+        default: false
+      compose:
+        description: Hold docker-compose.yml to the deployment shape. Passed through to dev-config's check.yml.
+        type: boolean
+        default: false
+      mutation-lane:
+        description: Mutate the domain files this branch changed. Passed through to dev-config's check.yml.
+        type: boolean
+        default: false
+      mutation-floor:
+        description: The mutation score the changed domain files must hold. Passed through to dev-config's check.yml.
+        type: string
+        default: ""
+      contract-exemptions:
+        description: >-
+          Repo-contract facts this repo is structurally unable to satisfy, space-separated.
+          A consumer of this workflow names `ci-call` among them: the contract asks for a
+          call into dev-config's check.yml at a pinned SHA, and the call it has is this one.
+          Passed through to dev-config's check.yml.
+        type: string
+        default: ""
+      stack-allowlist:
+        description: Packages this repo keeps against the stack denylist. Passed through to dev-config's check.yml.
+        type: string
+        default: ""
+      test-network:
+        description: Why this repo's suite has to reach a real network. Passed through to dev-config's check.yml.
+        type: string
+        default: ""
+      test-suite-evidence:
+        description: The artifact name for the junit report. Passed through to dev-config's check.yml.
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  static:
+    uses: gokayo43/dev-config/.github/workflows/check.yml@602fca2f24341ef9c445b4a6f750e887cf156f37 # v0.50.1
+    with:
+      build: ${{ inputs.build }}
+      affected: ${{ inputs.affected }}
+      compose: ${{ inputs.compose }}
+      mutation-lane: ${{ inputs['mutation-lane'] }}
+      mutation-floor: ${{ inputs['mutation-floor'] }}
+      contract-exemptions: ${{ inputs['contract-exemptions'] }}
+      stack-allowlist: ${{ inputs['stack-allowlist'] }}
+      test-network: ${{ inputs['test-network'] }}
+      test-suite-evidence: ${{ inputs['test-suite-evidence'] }}
+      # The eleven inputs aimed at that workflow's database job are not passed
+      # through and are not declared above: it refuses every one of them with
+      # `database: false`, and what would answer them here is a MariaDB job of
+      # this repo's own.
+      database: false
