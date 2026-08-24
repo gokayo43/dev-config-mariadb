@@ -218,6 +218,6 @@ jobs:
       # migrations produced, so it needs the schema that step builds rather than
       # one written by hand. Its own pin, because an action and the workflow
       # pinning it are two commits — CLAUDE.md, "Releasing an action".
-      - uses: gokayo43/dev-config-mariadb/.github/actions/db-datetime@6c4dfef8e47cc2831645a8a4493ffb750e52336f
+      - uses: gokayo43/dev-config-mariadb/.github/actions/db-datetime@a79765e710766bb0128feda511b61bf87e379902
         with:
           datetime-allowlist: ${{ inputs['datetime-allowlist'] }}
