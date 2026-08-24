@@ -231,7 +231,7 @@ jobs:
       # because GitHub gives a service image no way to read a value declared
       # anywhere else. tests/wrapper-inputs.test.ts is what holds the two to one
       # digest.
-      - uses: gokayo43/dev-config-mariadb/.github/actions/db-replay@dfb622f1375e813dcedace8551009873e996becc
+      - uses: gokayo43/dev-config-mariadb/.github/actions/db-replay@726cbd4698c6a74409382ae54dd1e4aad1000e51
         with:
           # renovate: datasource=docker depName=mariadb
           db-image: mariadb:11.4@sha256:4f1d8d202fcf7bcb3902f63af09f9c1a050c2922a89652f22abaec0d4f015e83
@@ -243,7 +243,7 @@ jobs:
       # migrations produced, so it needs the schema that step builds rather than
       # one written by hand. Its own pin, because an action and the workflow
       # pinning it are two commits — CLAUDE.md, "Releasing an action".
-      - uses: gokayo43/dev-config-mariadb/.github/actions/db-datetime@a79765e710766bb0128feda511b61bf87e379902
+      - uses: gokayo43/dev-config-mariadb/.github/actions/db-datetime@726cbd4698c6a74409382ae54dd1e4aad1000e51
         with:
           datetime-allowlist: ${{ inputs['datetime-allowlist'] }}
           database-url: ${{ steps.pinned.outputs['database-url'] }}
