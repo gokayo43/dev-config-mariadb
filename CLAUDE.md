@@ -31,17 +31,22 @@ should have this too" is an issue there, not a second implementation here.
   own SHA, so the wrapper's pin is always one commit behind whatever is under
   review.
 - `tests/` — what CI cannot see from outside. `wrapper-inputs.test.ts` grades
-  the wrapper as a document: every declared input reaches the call under its own
-  name, the Postgres job stays off and cannot be turned on, and the two
-  workflows name one dev-config commit.
+  the wrapper and the README against the dev-config in `node_modules`, which is
+  the commit the workflows call: every declared input reaches the call under its
+  own name and is declared with dev-config's own type and default, nothing is
+  forwarded that dev-config does not declare, the Postgres job stays off and
+  cannot be turned on, what the README tables and what it says is refused cover
+  dev-config's input surface exactly, and the three carriers of the pin agree.
 
 ## Moving the dev-config pin
 
-Both workflows carry it and they move together — the suite fails when they
-disagree, because a repo gated by one dev-config and shipping another is
-reviewing its consumers' gate against a version nobody ran. Renovate raises the
-bump as a PR (`renovate.json` extends dev-config's preset, which keeps that pin
-off automerge); the tag in the trailing comment moves with the SHA.
+Three files carry it — both workflows and `package.json`, with `bun.lock`
+following the manifest — and they move together, which the suite enforces: a
+repo gated by one dev-config, shipping another and grading its own wrapper
+against a third has no answer about any of them. Renovate raises the bump as a
+PR (`renovate.json` extends dev-config's preset, which keeps that pin off
+automerge); the tag in the trailing comment moves with the SHA, and
+`bun install` is part of adopting it.
 
 Once a database job here ships a composite action, this repo takes on
 dev-config's release shape too: a commit cannot reference its own SHA, so the

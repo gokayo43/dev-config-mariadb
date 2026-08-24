@@ -15,23 +15,23 @@ on:
       # here: each is handed to that workflow unchanged, and a description
       # restating what it does would be a second copy to drift.
       build:
-        description: Build before the static gate. Passed through to dev-config's check.yml.
+        description: Build before the static gate.
         type: boolean
         default: false
       affected:
-        description: Narrow the typecheck lane to a pull request's changed packages. Passed through to dev-config's check.yml.
+        description: Narrow the typecheck lane to a pull request's changed packages.
         type: boolean
         default: false
       compose:
-        description: Hold docker-compose.yml to the deployment shape. Passed through to dev-config's check.yml.
+        description: Hold docker-compose.yml to the deployment shape.
         type: boolean
         default: false
       mutation-lane:
-        description: Mutate the domain files this branch changed. Passed through to dev-config's check.yml.
+        description: Mutate the domain files this branch changed.
         type: boolean
         default: false
       mutation-floor:
-        description: The mutation score the changed domain files must hold. Passed through to dev-config's check.yml.
+        description: The mutation score the changed domain files must hold.
         type: string
         default: ""
       contract-exemptions:
@@ -39,19 +39,18 @@ on:
           Repo-contract facts this repo is structurally unable to satisfy, space-separated.
           A consumer of this workflow names `ci-call` among them: the contract asks for a
           call into dev-config's check.yml at a pinned SHA, and the call it has is this one.
-          Passed through to dev-config's check.yml.
         type: string
         default: ""
       stack-allowlist:
-        description: Packages this repo keeps against the stack denylist. Passed through to dev-config's check.yml.
+        description: Packages this repo keeps against the stack denylist.
         type: string
         default: ""
       test-network:
-        description: Why this repo's suite has to reach a real network. Passed through to dev-config's check.yml.
+        description: Why this repo's suite has to reach a real network.
         type: string
         default: ""
       test-suite-evidence:
-        description: The artifact name for the junit report. Passed through to dev-config's check.yml.
+        description: The artifact name for the junit report.
         type: string
         default: ""
 
@@ -71,8 +70,9 @@ jobs:
       stack-allowlist: ${{ inputs['stack-allowlist'] }}
       test-network: ${{ inputs['test-network'] }}
       test-suite-evidence: ${{ inputs['test-suite-evidence'] }}
-      # The eleven inputs aimed at that workflow's database job are not passed
-      # through and are not declared above: it refuses every one of them with
-      # `database: false`, and what would answer them here is a MariaDB job of
-      # this repo's own.
+      # Every other input that workflow declares is neither declared above nor
+      # passed on: each is aimed at the Postgres database job or at the app that
+      # job boots, and what will answer them here is a MariaDB job of this
+      # repo's own. README.md names them; the suite holds that list to what
+      # dev-config declares at the pin above.
       database: false

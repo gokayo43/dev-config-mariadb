@@ -67,15 +67,22 @@ is the other half of the same issue.
 Each is handed to dev-config's `check.yml` unchanged, so
 [its README](https://github.com/gokayo43/dev-config#ci) is the reference for
 what one does — repeated here, the description would be a copy to drift.
-`tests/wrapper-inputs.test.ts` is what keeps the list above honest: an input
-declared and not handed on is a setting a consumer wrote that nothing reads.
+`tests/wrapper-inputs.test.ts` is what keeps every list on this page honest: it
+reads the dev-config this repo installs — the same commit the workflows call —
+and fails on a type or default of this wrapper's own, on an input declared and
+not handed on, and on a name this page has stopped accounting for.
 
-The eleven inputs aimed at dev-config's own database job — `upgrade-gate`,
-`semantic-fixtures`, `capacity-path`, `capacity-script`, `db-gate-evidence`,
-`route-allowlist`, `timestamp-allowlist`, `backfill-seed`, `backfill-command`,
-`probe-command` and `probe-timeout` — are not accepted here. That job is
-Postgres and this workflow leaves it off; the jobs below are what answers those
-questions for MariaDB.
+Every other input dev-config's `check.yml` declares is refused here rather than
+forwarded: `upgrade-gate`, `semantic-fixtures`, `capacity-path`,
+`capacity-script`, `db-gate-evidence`, `route-allowlist`, `timestamp-allowlist`,
+`backfill-seed`, `backfill-command`, `probe-command`, `probe-timeout`,
+`start-command` and `health-url`. Each is aimed at the Postgres database job or
+at the app that job boots, and this workflow leaves that job off; the jobs below
+are what will answer them for MariaDB. dev-config refuses most of them itself
+when its database job is off, and the last two it cannot, because they carry
+defaults rather than an empty one —
+[dev-config#66](https://github.com/gokayo43/dev-config/issues/66) is that hole,
+and declaring neither of them here is what keeps a consumer out of it.
 
 ## The jobs
 

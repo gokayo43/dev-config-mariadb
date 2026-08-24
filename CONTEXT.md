@@ -28,6 +28,7 @@ here; an input that did would not be one.
 **A consumer** — a repo whose `ci.yml` calls the wrapper. There are two, both
 named in `README.md`, and both are older than the fleet's Postgres decision.
 
-**The pin** — the 40-character commit SHA a `uses:` names, with the release tag
-as a trailing comment. The pin is the contract; the tag is the label. Nothing
-here is reached by a tag or a branch.
+**The pin** — the 40-character commit SHA of dev-config that this repo calls,
+gates itself with and installs, written with the release tag as a trailing
+comment where a workflow carries it. The pin is the contract; the tag is the
+label. Nothing here is reached by a tag or a branch.
