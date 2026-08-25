@@ -1,14 +1,14 @@
 name: Check
 
-# The gate the two MariaDB-bound repos run, called by reference:
-#   jobs.check.uses: gokayo43/dev-config-mariadb/.github/workflows/check.yml@<sha>
+# The gate the two MySQL-family repos run, called by reference:
+#   jobs.check.uses: gokayo43/dev-config-db/.github/workflows/check.yml@<sha>
 #
 # Everything static is dev-config's, unchanged: this workflow calls that one
 # rather than restating any of it, so a gate lands here when the pin below moves
 # and never because a copy drifted. The `database: false` in that call is not a
-# preference — dev-config's database job is Postgres, and the MariaDB jobs this
-# workflow adds are what a consumer gets instead. This workflow's own `database`
-# input turns those on and never reaches that call.
+# preference — dev-config's database job is Postgres, and the database job this
+# workflow adds is what a consumer gets instead. This workflow's own `database`
+# input turns that on and never reaches that call.
 on:
   workflow_call:
     inputs:
@@ -52,13 +52,24 @@ on:
         default: ""
       database:
         description: >-
-          Replay the repo's own migrations onto an empty MariaDB, twice, compare
-          the schema either side, then boot the app against the result, probe it
-          where the repo has a probe, and ramp it. This is a job of this repo's
-          own and this input never reaches dev-config's check.yml, whose job of
-          that name is Postgres.
+          Replay the repo's own migrations onto an empty database, twice,
+          compare the schema either side, then boot the app against the result,
+          probe it where the repo has a probe, and ramp it. This is a job of
+          this repo's own and this input never reaches dev-config's check.yml,
+          whose job of that name is Postgres.
         type: boolean
         default: false
+      database-image:
+        description: >-
+          The server that job runs, as an image pinned by digest — a MariaDB or
+          a MySQL 8 one, which are the two products these gates are certified
+          against. It is the consumer's own declaration and their own pin
+          discipline: nothing here infers a product from it, and the gates ask
+          the image what it ships rather than the reference what it is called.
+          The default is the MariaDB build this repo certifies, so a consumer
+          who runs that writes nothing.
+        type: string
+        default: mariadb:11.4@sha256:4f1d8d202fcf7bcb3902f63af09f9c1a050c2922a89652f22abaec0d4f015e83
       db-gate-evidence:
         type: string
         default: ""
@@ -131,6 +142,7 @@ jobs:
     steps:
       - env:
           DATABASE: ${{ inputs.database }}
+          DATABASE_IMAGE: ${{ inputs['database-image'] }}
           DB_GATE_EVIDENCE: ${{ inputs['db-gate-evidence'] }}
           START_COMMAND: ${{ inputs['start-command'] }}
           HEALTH_URL: ${{ inputs['health-url'] }}
@@ -139,12 +151,13 @@ jobs:
           CAPACITY_SCRIPT: ${{ inputs['capacity-script'] }}
           CAPACITY_PATH: ${{ inputs['capacity-path'] }}
           ROUTE_ALLOWLIST: ${{ inputs['route-allowlist'] }}
-          # The two defaults above, written out a second time because a step
+          # The three defaults above, written out a second time because a step
           # cannot read an input's declared default. tests/refusals.test.ts
-          # holds the two statements together; `changed_from_default` below is
-          # why they are compared at all.
+          # holds the pairs together; `changed_from_default` below is why they
+          # are compared at all.
           START_COMMAND_DEFAULT: bun run start
           HEALTH_URL_DEFAULT: http://localhost:3000/api/health
+          DATABASE_IMAGE_DEFAULT: mariadb:11.4@sha256:4f1d8d202fcf7bcb3902f63af09f9c1a050c2922a89652f22abaec0d4f015e83
           DATETIME_ALLOWLIST: ${{ inputs['datetime-allowlist'] }}
         shell: bash
         run: |
@@ -169,13 +182,13 @@ jobs:
             return 0
           }
 
-          # The second shape, for the two inputs that carry a value rather than
-          # an empty default: a workflow_call input cannot be asked whether the
-          # caller passed it, so "passed" is spelled "differs from the default".
-          # That leaves one caller invisible — the one who passes exactly the
-          # default — which docs/gates/db-serving.md names rather than papers
-          # over, and dev-config#66 is the same two inputs going unrefused
-          # there, where the guard has only the first shape.
+          # The second shape, for the three inputs that carry a value rather
+          # than an empty default: a workflow_call input cannot be asked whether
+          # the caller passed it, so "passed" is spelled "differs from the
+          # default". That leaves one caller invisible — the one who passes
+          # exactly the default — which docs/gates/db-serving.md names rather
+          # than papers over, and dev-config#66 is two of the three going
+          # unrefused there, where the guard has only the first shape.
           changed_from_default() {
             if [ "$DATABASE" != true ] && [ "$2" != "$3" ]; then
               refuse "$1 needs database: true — $4, and this call leaves that job off"
@@ -197,6 +210,8 @@ jobs:
             "the route floor is measured across the database job's ramp"
           needs_job datetime-allowlist "$DATETIME_ALLOWLIST" \
             "it waives columns the database job's DATETIME step grades"
+          changed_from_default database-image "$DATABASE_IMAGE" "$DATABASE_IMAGE_DEFAULT" \
+            "it is the server the database job starts, and this call starts none"
           changed_from_default start-command "$START_COMMAND" "$START_COMMAND_DEFAULT" \
             "it is how the database job's boot step starts the app"
           changed_from_default health-url "$HEALTH_URL" "$HEALTH_URL_DEFAULT" \
@@ -216,36 +231,20 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
-    # Empty on every run, which is the one state no developer database is ever
-    # in. Pinned by digest for the same reason an action is, with the tag kept
-    # inline: that is the form Renovate's docker datasource maintains.
+    # The database server is NOT here, and that is the one thing about this job
+    # worth knowing before reading it. A service image is a literal in this
+    # file, and the server is the consumer's to pin — `services.<id>.image`
+    # holding `${{ inputs[…] }}` is read by dev-config's own pin gate as a
+    # mutable tag and refused (gokayo43/dev-config#68). So the server is started
+    # by a step instead, from the image the caller declared: db-server, first in
+    # the job, publishing on the loopback port DATABASE_URL below names, which
+    # is what a service container would have done.
     #
-    # 11.4 because that is what the server this gate is written for runs —
-    # nfp-elysia's, probed at 11.4.12-MariaDB. The other repo named in README.md
-    # runs MySQL 8.0.32 rather than MariaDB at all, which is a lane this
-    # workflow does not have and issue #9 is where it is decided; until then a
-    # consumer on MySQL is refused by this image rather than quietly graded
-    # against another server's idea of a schema.
-    #
-    # Redis is started with it, unconditionally: a repo whose migrator imports
-    # its own environment module gets that module's Redis check on the way in,
-    # and an idle container costs a couple of seconds.
+    # Redis stays a service and is started unconditionally: it is this
+    # workflow's own pin rather than a consumer's, and a repo whose migrator
+    # imports its own environment module gets that module's Redis check on the
+    # way in, for the couple of seconds an idle container costs.
     services:
-      mariadb:
-        image: mariadb:11.4@sha256:4f1d8d202fcf7bcb3902f63af09f9c1a050c2922a89652f22abaec0d4f015e83
-        env:
-          MARIADB_ROOT_PASSWORD: mariadb
-          MARIADB_DATABASE: app
-        ports:
-          - 3306:3306
-        # Over TCP on purpose. The image's entrypoint runs a temporary server
-        # with networking off while it initialises, so a socket ping answers
-        # while the database the job is about to migrate does not exist yet.
-        options: >-
-          --health-cmd "mariadb-admin --protocol=tcp -h 127.0.0.1 -uroot -pmariadb ping"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 30
       redis:
         image: redis:7-alpine@sha256:ff02b58f971e7d7d156a1267e283fcbbeee91773b6aa36c49dac28ecfe28eadf
         ports:
@@ -259,7 +258,7 @@ jobs:
     # 127.0.0.1 rather than localhost: a MySQL-family client reads that name as
     # an instruction to use a unix socket, and the server is a container.
     env:
-      DATABASE_URL: mysql://root:mariadb@127.0.0.1:3306/app
+      DATABASE_URL: mysql://root:db-gate@127.0.0.1:3306/app
       REDIS_URL: redis://127.0.0.1:6379
 
     steps:
@@ -297,6 +296,17 @@ jobs:
             echo "path=$PATH"
           } >> "$GITHUB_OUTPUT"
 
+      # Before the graded repo's own install scripts, because it is what every
+      # step after it connects to and because the two products differ about how
+      # a client authenticates: one step owns that, and it is this one. By full
+      # path and SHA rather than `./` for the reason the steps below carry.
+      - uses: gokayo43/dev-config-db/.github/actions/db-server@3d650f2a40dfc609bddb5c1c10bd6530e58faae9
+        with:
+          database-image: ${{ inputs['database-image'] }}
+          database-url: ${{ steps.pinned.outputs['database-url'] }}
+          bun: ${{ steps.pinned.outputs.bun }}
+          path: ${{ steps.pinned.outputs.path }}
+
       - run: bun install --frozen-lockfile
 
       # The same step dev-config's database job runs, and for the same reason: a
@@ -313,14 +323,15 @@ jobs:
       # workflow pinning it are two commits — this repo's release contract, in
       # CLAUDE.md under "Releasing an action".
       #
-      # The image is written twice in this file, in the service above and here,
-      # because GitHub gives a service image no way to read a value declared
-      # anywhere else. tests/wrapper-inputs.test.ts is what holds the two to one
-      # digest.
-      - uses: gokayo43/dev-config-mariadb/.github/actions/db-replay@3d650f2a40dfc609bddb5c1c10bd6530e58faae9
+      # The same image the step above started the server from, because the dump
+      # client comes out of it: a schema rendered by one build of one product
+      # and compared against another's is two renderings, not two schemas. It is
+      # one value rather than two statements — the input — and
+      # tests/wrapper-inputs.test.ts is what holds every step that takes an
+      # image to it.
+      - uses: gokayo43/dev-config-db/.github/actions/db-replay@3d650f2a40dfc609bddb5c1c10bd6530e58faae9
         with:
-          # renovate: datasource=docker depName=mariadb
-          db-image: mariadb:11.4@sha256:4f1d8d202fcf7bcb3902f63af09f9c1a050c2922a89652f22abaec0d4f015e83
+          database-image: ${{ inputs['database-image'] }}
           database-url: ${{ steps.pinned.outputs['database-url'] }}
           bun: ${{ steps.pinned.outputs.bun }}
           path: ${{ steps.pinned.outputs.path }}
@@ -329,7 +340,7 @@ jobs:
       # migrations produced, so it needs the schema that step builds rather than
       # one written by hand. Its own pin, because an action and the workflow
       # pinning it are two commits — CLAUDE.md, "Releasing an action".
-      - uses: gokayo43/dev-config-mariadb/.github/actions/db-datetime@3d650f2a40dfc609bddb5c1c10bd6530e58faae9
+      - uses: gokayo43/dev-config-db/.github/actions/db-datetime@3d650f2a40dfc609bddb5c1c10bd6530e58faae9
         with:
           datetime-allowlist: ${{ inputs['datetime-allowlist'] }}
           database-url: ${{ steps.pinned.outputs['database-url'] }}
@@ -341,7 +352,7 @@ jobs:
       # under load. A step of this job rather than a job of its own, for the
       # reason CONTEXT.md gives at "A database job". docs/gates/db-serving.md is
       # the page.
-      - uses: gokayo43/dev-config-mariadb/.github/actions/db-serving@3d650f2a40dfc609bddb5c1c10bd6530e58faae9
+      - uses: gokayo43/dev-config-db/.github/actions/db-serving@3d650f2a40dfc609bddb5c1c10bd6530e58faae9
         with:
           start-command: ${{ inputs['start-command'] }}
           health-url: ${{ inputs['health-url'] }}

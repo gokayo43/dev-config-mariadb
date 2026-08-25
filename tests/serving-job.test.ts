@@ -215,3 +215,27 @@ test("the caller reads the interpreter and the path before the graded repo runs"
   expect(pinned).toBeLessThan(install);
   expect(install).toBeLessThan(gate);
 });
+
+/**
+ * The server is a step now rather than a service container, which moves one
+ * thing the runner used to guarantee into this file's order: a service was up
+ * before any step ran, and a step is up only before the steps after it.
+ *
+ * So every step of this job that touches the database has to be after the one
+ * that starts it — and the failure this catches is not a hang: the replay gate
+ * would report a refused connection, which reads as a fact about the repo under
+ * grade rather than as a job that was assembled wrong.
+ */
+test("every step that uses the database comes after the step that starts it", () => {
+  const steps = jobSteps();
+  const using = (named: string): number =>
+    steps.findIndex((step) => (textAt(step, "uses") ?? "").includes(named));
+
+  const server = using("actions/db-server");
+  expect(server).toBeGreaterThan(-1);
+  for (const gate of ["actions/db-replay", "actions/db-datetime", "actions/db-serving"]) {
+    expect(`${gate} runs after the server: ${using(gate) > server}`).toBe(
+      `${gate} runs after the server: true`,
+    );
+  }
+});

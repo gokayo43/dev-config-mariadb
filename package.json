@@ -1,12 +1,12 @@
 {
-  "name": "dev-config-mariadb",
+  "name": "dev-config-db",
   "version": "0.1.0",
   "private": true,
-  "description": "The MariaDB extension of @gokayo43/dev-config: one reusable workflow, for the two legacy repos whose database is MariaDB.",
+  "description": "The MySQL-family extension of @gokayo43/dev-config: one reusable workflow, for the two legacy repos whose database is MariaDB or MySQL 8.",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/gokayo43/dev-config-mariadb.git"
+    "url": "git+https://github.com/gokayo43/dev-config-db.git"
   },
   "type": "module",
   "scripts": {

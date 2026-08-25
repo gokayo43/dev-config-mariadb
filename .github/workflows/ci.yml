@@ -29,10 +29,11 @@ jobs:
       contract-exemptions: secrets
       # Read in review like the reason on a lint directive, and it is about this
       # suite rather than about the gate: the database gates' cases each drive a
-      # real MariaDB, which the suite starts as a container and reaches on the
-      # runner's loopback. The sealed lane puts the run in a network namespace
-      # with a loopback of its own, which no published port is on.
-      test-network: the database gates' suites drive a MariaDB container on the runner's loopback
+      # real server — one container per product this repo certifies — which the
+      # suite starts and reaches on the runner's loopback. The sealed lane puts
+      # the run in a network namespace with a loopback of its own, which no
+      # published port is on.
+      test-network: the database gates' suites drive server containers on the runner's loopback
 
   # The one thing `bun test` cannot run: the shipped k6 ramp, under the k6 this
   # repo pins. A bun test cannot fetch a binary — the suite's lane has no

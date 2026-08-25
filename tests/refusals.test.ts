@@ -95,7 +95,7 @@ const AIMED_AT_THE_JOB = [
   [
     "DB_GATE_EVIDENCE",
     "db-gate-evidence",
-    "mariadb-evidence",
+    "db-evidence",
     "names the artifact the database job uploads",
   ],
   [
@@ -127,6 +127,12 @@ const AIMED_AT_THE_JOB = [
     "datetime-allowlist",
     "shop.opens_at -- the shop's clock",
     "waives columns the database job's DATETIME step grades",
+  ],
+  [
+    "DATABASE_IMAGE",
+    "database-image",
+    "mysql:8.0.46@sha256:7dcddc01f13bab2f15cde676d44d01f61fc9f99fe7785e86196dfc07d358ae2b",
+    "it is the server the database job starts, and this call starts none",
   ],
   [
     "START_COMMAND",
@@ -194,27 +200,32 @@ test("a call that asks for the job and lets every input default passes", async (
 });
 
 /**
- * The two inputs dev-config's own guard cannot see (dev-config#66). Every other
+ * The three inputs that carry a value rather than an empty default. Every other
  * input aimed at the job defaults to the empty string, so "the caller passed
- * it" is spelled "non-empty"; these two carry a value, because a consumer
- * moving between the two workflows writes one call either way and the defaults
- * are dev-config's. So they are compared with those defaults instead — which
- * leaves exactly one caller invisible, and the page says so rather than
- * implying the hole is closed.
+ * it" is spelled "non-empty"; these three carry a value — two of them because a
+ * consumer moving between the two workflows writes one call either way and the
+ * defaults are dev-config's, and the third because a consumer running the
+ * server this repo certifies should write nothing. So they are compared with
+ * those defaults instead — which leaves exactly one caller invisible, and the
+ * page says so rather than implying the hole is closed. dev-config#66 is the
+ * two of them going unrefused upstream.
  */
 test("the defaults the guard compares against are the defaults this workflow declares", () => {
   // Written twice on purpose — a workflow_call input's default is not readable
   // from a step — so the two statements are held together here instead. A drift
-  // between them refuses every caller or none.
+  // between them refuses every caller or none, and for the image it would refuse
+  // the consumer who wrote nothing at all.
   expect(STEP.env["START_COMMAND_DEFAULT"]).toBe(declaredDefault("start-command"));
   expect(STEP.env["HEALTH_URL_DEFAULT"]).toBe(declaredDefault("health-url"));
+  expect(STEP.env["DATABASE_IMAGE_DEFAULT"]).toBe(declaredDefault("database-image"));
 });
 
-test("passing those two exactly as they are declared is the one caller this cannot see", async () => {
+test("passing those exactly as they are declared is the one caller this cannot see", async () => {
   const invisible = await ran({
     DATABASE: "false",
     START_COMMAND: declaredDefault("start-command"),
     HEALTH_URL: declaredDefault("health-url"),
+    DATABASE_IMAGE: declaredDefault("database-image"),
   });
 
   // Not a wish: a workflow_call input cannot be asked whether the caller passed

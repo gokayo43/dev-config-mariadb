@@ -1,8 +1,8 @@
-name: MariaDB replay gate
+name: Replay gate
 description: >-
-  Replays the calling repo's own db:migrate onto the empty MariaDB the caller
-  declared, twice, and compares the two schema dumps. The caller declares the
-  service, so it owns the URL and hands it in; one value means no two steps can
+  Replays the calling repo's own db:migrate onto the empty database the caller
+  started, twice, and compares the two schema dumps. The caller declares the
+  server, so it owns the URL and hands it in; one value means no two steps can
   disagree about which database was migrated. docs/gates/db-replay.md is what
   each half proves and what it cannot catch.
 
@@ -13,12 +13,12 @@ inputs:
       there; this gate does not, and passes it as an explicit path rather than
       by being run there itself.
     default: .
-  db-image:
+  database-image:
     description: >-
-      The image the calling job runs the MariaDB service from, pinned by digest.
-      The dump's client is taken from this same image so that client and server
-      are one build rather than two versions that agree today; nothing on a
-      runner ships a MariaDB client, and this is the only pin either of them
+      The image the calling job started the server from, pinned by digest. The
+      dump's client is taken from this same image so that client and server are
+      one build rather than two versions that agree today; nothing on a runner
+      ships a client for either product, and this is the only pin either of them
       needs. Required, and deliberately without a default: a default here would
       be a second place the caller's choice of server is written down.
     required: true
@@ -60,12 +60,12 @@ runs:
       # in the project below, by the path this step hands the gate.
       working-directory: ${{ github.action_path }}
       env:
-        INPUT_DB_IMAGE: ${{ inputs['db-image'] }}
+        INPUT_DATABASE_IMAGE: ${{ inputs['database-image'] }}
         INPUT_FROM_EMPTY: ${{ runner.temp }}/replay-from-empty.schema
         INPUT_REPLAYED: ${{ runner.temp }}/replay-again.schema
         INPUT_BUN: ${{ inputs.bun }}
         # The dump below is `docker`, resolved by name, and the image it runs is
-        # where `mariadb-dump` comes from: pinning the path is what keeps "the
+        # where the dump client comes from: pinning the path is what keeps "the
         # schema is the server's own rendering" true, since a forged docker
         # prints whatever it likes and two of its dumps agree with each other.
         PATH: ${{ inputs.path }}

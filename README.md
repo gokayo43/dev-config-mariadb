@@ -1,9 +1,9 @@
-# dev-config-mariadb
+# dev-config-db
 
-The MariaDB extension of [`@gokayo43/dev-config`](https://github.com/gokayo43/dev-config).
-One reusable workflow: a consuming repo calls it instead of dev-config's
-`check.yml` and gets that gate unchanged, plus the database jobs a MariaDB repo
-needs.
+The MySQL-family extension of
+[`@gokayo43/dev-config`](https://github.com/gokayo43/dev-config). One reusable
+workflow: a consuming repo calls it instead of dev-config's `check.yml` and gets
+that gate unchanged, plus the database job a MariaDB or MySQL 8 repo needs.
 
 Nothing here is a copy of dev-config. The static half is a call into it, pinned
 by commit SHA, so a gate lands here when the pin moves and never because a fork
@@ -21,7 +21,7 @@ call this one.
 The database jobs are MariaDB and only MariaDB. `nfp-elysia`'s server is MariaDB
 11.4; `wmstcs`'s is MySQL 8.0, which is close enough to share a dialect and not
 close enough to share a server image or a dump client —
-[#9](https://github.com/gokayo43/dev-config-mariadb/issues/9) is where that lane
+[#9](https://github.com/gokayo43/dev-config-db/issues/9) is where that lane
 is decided. Until it lands, a MySQL consumer is refused by the pinned image
 rather than graded against another server's idea of a schema.
 
@@ -44,12 +44,27 @@ concurrency:
 
 jobs:
   check:
-    uses: gokayo43/dev-config-mariadb/.github/workflows/check.yml@<commit sha> # <release tag>
+    uses: gokayo43/dev-config-db/.github/workflows/check.yml@<commit sha> # <release tag>
     with:
       build: true
       database: true
       contract-exemptions: ci-call
 ```
+
+A repo whose server is MySQL 8 adds one line, pinned by digest the way it pins
+everything else:
+
+```yaml
+database-image: mysql:8.0.42@sha256:… # renovate keeps this current
+```
+
+`database-image` defaults to the MariaDB build this repo certifies, so a MariaDB
+consumer writes nothing. The pin is the consumer's own discipline and the whole
+contract: an image pinned by tag can be repointed by its publisher, and a gate
+whose server changed under it grades a different thing every week. This repo
+holds its own default to a digest in `tests/wrapper-inputs.test.ts`, since
+dev-config's pin gate cannot see it — [docs/gates/db-server.md](docs/gates/db-server.md)
+is why the server is a step rather than a service container.
 
 `ci-call` is part of the call rather than a shortcut: dev-config's repo contract
 asks a repo to call **dev-config's** `check.yml` at a pinned SHA, and a repo
@@ -72,6 +87,7 @@ is the other half of the same issue.
 | `test-network`        | `string`  |
 | `test-suite-evidence` | `string`  |
 | `database`            | `boolean` |
+| `database-image`      | `string`  |
 | `db-gate-evidence`    | `string`  |
 | `start-command`       | `string`  |
 | `health-url`          | `string`  |
@@ -89,18 +105,21 @@ here carry no description of their own for that reason — a second copy of that
 prose is a copy that drifts — and the one exception says what dev-config
 cannot: that a consumer of this workflow owes `ci-call`.
 
-The other ten are this workflow's own and reach dev-config's `check.yml` under
-no name at all. Nine are spelled the way dev-config spells the same nine, and
-mean here what they mean there against another server: `database` adds the
+The other eleven are this workflow's own and reach dev-config's `check.yml`
+under no name at all. Nine are spelled the way dev-config spells the same nine,
+and mean here what they mean there against another server: `database` adds the
 database job below, `db-gate-evidence` names the artifact it leaves behind, and
 the seven after them aim its boot, probe and ramp steps —
 [docs/gates/db-serving.md](docs/gates/db-serving.md) is what each one does. A
 consumer that moves between the two workflows writes one call either way.
 
-`datetime-allowlist` is the tenth, and the one input dev-config has no name for
-at all: their `timestamp-allowlist` stays refused below rather than standing in
-for it. [docs/gates/db-datetime.md](docs/gates/db-datetime.md) is what this one
-waives and why it is spelled this way.
+Two are names dev-config has no use for. `datetime-allowlist` is the type this
+family gets wrong where Postgres gets it right: their `timestamp-allowlist`
+stays refused below rather than standing in for it, and
+[docs/gates/db-datetime.md](docs/gates/db-datetime.md) is what it waives.
+`database-image` is the server itself, which dev-config's Postgres job has no
+question to ask — [docs/gates/db-server.md](docs/gates/db-server.md) is what is
+done with it.
 
 `tests/wrapper-inputs.test.ts` is what keeps every list on this page honest: it
 reads the dev-config this repo installs — the same commit the workflows call —
@@ -132,14 +151,14 @@ as a **matrix** gives each leg its own, and keeps it distinct from
 
 ## The jobs
 
-| Job                       | What it runs                                                                                                                                                                                                                                                                                                                   | Status                                                                  |
-| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------- |
-| `refusals`                | the one rule this workflow adds rather than delegates: a call asking for an input aimed at a database job, without that job, is refused rather than ignored                                                                                                                                                                    | shipped                                                                 |
-| `static`                  | dev-config's `check.yml` with `database: false`: the secret scan, the repo contract, the stack denylist, the workflow lint, suppression hygiene, shell scripts, `format:check` / `lint` / `typecheck` / `knip`, the test suite, and — each where the caller asks for it — the compose lint and the mutation lane               | shipped                                                                 |
-| `database`                | the repo's `db:migrate` onto an empty MariaDB, twice, compared as normalized schema dumps — [docs/gates/db-replay.md](docs/gates/db-replay.md) — and then, against that database, the app booted, the repo's own probe run, and a k6 ramp with the route-coverage floor — [docs/gates/db-serving.md](docs/gates/db-serving.md) | shipped                                                                 |
-| upgrade path and backfill | the base ref's lineage upgraded and compared with a fresh build, and a backfill run twice                                                                                                                                                                                                                                      | planned ([#4](https://github.com/gokayo43/dev-config-mariadb/issues/4)) |
-| DATETIME wall clock       | a step of `database`, after the migrations have built the schema: every `DATETIME` column in the database they built carries a reasoned allowlist entry, MariaDB's half of the ambiguous-instant class — [docs/gates/db-datetime.md](docs/gates/db-datetime.md)                                                                | shipped                                                                 |
-| integration lane          | the repo's DB-touching suite against a real MariaDB and Redis, with the junit report read afterwards                                                                                                                                                                                                                           | planned ([#6](https://github.com/gokayo43/dev-config-mariadb/issues/6)) |
+| Job                       | What it runs                                                                                                                                                                                                                                                                                                                                                                                                                                            | Status                                                             |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------ |
+| `refusals`                | the one rule this workflow adds rather than delegates: a call asking for an input aimed at a database job, without that job, is refused rather than ignored                                                                                                                                                                                                                                                                                             | shipped                                                            |
+| `static`                  | dev-config's `check.yml` with `database: false`: the secret scan, the repo contract, the stack denylist, the workflow lint, suppression hygiene, shell scripts, `format:check` / `lint` / `typecheck` / `knip`, the test suite, and — each where the caller asks for it — the compose lint and the mutation lane                                                                                                                                        | shipped                                                            |
+| `database`                | the server the consumer pinned, started and answering — [docs/gates/db-server.md](docs/gates/db-server.md) — then the repo's `db:migrate` onto an empty database on it, twice, compared as normalized schema dumps — [docs/gates/db-replay.md](docs/gates/db-replay.md) — and then, against that database, the app booted, the repo's own probe run, and a k6 ramp with the route-coverage floor — [docs/gates/db-serving.md](docs/gates/db-serving.md) | shipped                                                            |
+| upgrade path and backfill | the base ref's lineage upgraded and compared with a fresh build, and a backfill run twice                                                                                                                                                                                                                                                                                                                                                               | planned ([#4](https://github.com/gokayo43/dev-config-db/issues/4)) |
+| DATETIME wall clock       | a step of `database`, after the migrations have built the schema: every `DATETIME` column in the database they built carries a reasoned allowlist entry, this family's half of the ambiguous-instant class — [docs/gates/db-datetime.md](docs/gates/db-datetime.md)                                                                                                                                                                                     | shipped                                                            |
+| integration lane          | the repo's DB-touching suite against a real server and Redis, with the junit report read afterwards                                                                                                                                                                                                                                                                                                                                                     | planned ([#6](https://github.com/gokayo43/dev-config-db/issues/6)) |
 
 ## Gating this repo
 
@@ -151,11 +170,12 @@ dev-config commit, and the suite fails when they stop agreeing.
 ```sh
 bun install
 bun run check   # format:check + lint + typecheck + knip
-bun test        # needs Docker: the database gates' suites drive a real MariaDB
+bun test        # needs Docker: the database gates' suites drive real servers
 ```
 
-The suite starts one MariaDB container per worktree and takes it down again, so
-`bun test` needs a Docker daemon it can reach. It also starts a real app on a
+The suite starts one container per product per worktree — a MariaDB and a MySQL
+8, since every server-touching case runs against both — and takes them down
+again, so `bun test` needs a Docker daemon it can reach. It also starts a real app on a
 real port, which is what the boot, probe and ramp gates are graded against. It
 is not sealed the way every other repo's suite is: dev-config's test-suite gate
 runs `bun test` in a network namespace holding nothing but its own loopback, and

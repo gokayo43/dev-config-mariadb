@@ -17,12 +17,13 @@ calls in place of dev-config's `check.yml`.
 "unchanged" means in this repo: the same workflow, at a pinned commit, over the
 consumer's own tree.
 
-**A database job** — a job of this repo's own that grades a MariaDB the
-consuming repo's migrations built, and the app that has to run against it.
+**A database job** — a job of this repo's own that grades a database the
+consuming repo's migrations built on the server it pinned, and the app that has
+to run against it.
 dev-config's job of that name is Postgres, and the two never run in one call.
 There is one, and the steps of `#3`–`#6` land in it rather than beside it: the
-database is the job's service container, so a second job would be grading an
-empty one.
+server is a container that job starts and holds, so a second job would be
+grading an empty one.
 
 **Pass-through** — an input the wrapper declares only in order to hand it to
 dev-config's `check.yml` under the same name. A pass-through has no behaviour
@@ -34,8 +35,14 @@ name at all, though it is spelled the way dev-config spells the same idea.
 database. The gate `#2` ships makes two of them, from empty, and its verdict is
 that the schema either side is the same.
 
-**The schema** — what `mariadb-dump` renders of a database's catalogue with no
-rows in it: tables, views and sequences, routines, events and triggers. Not the
+**A server product** — MariaDB or MySQL 8, the two this repo's gates are
+certified against. A consumer names theirs by pinning `database-image`; nothing
+here infers one from an image's name, and no gate asks which product it is
+looking at — where the two genuinely differ, the difference is asked of the
+image or of the server itself.
+
+**The schema** — what the image's own dump client renders of a database's
+catalogue with no rows in it: tables, views and sequences, routines, events and triggers. Not the
 rows, and not the three lines that record how many values an object has handed
 out or when it was last created — a table's `AUTO_INCREMENT` counter, a
 sequence's `SETVAL` position, an event's `STARTS` stamp. Those say what has
@@ -49,8 +56,8 @@ of its own, so the two spellings are not interchangeable. It is a migrator's
 bookkeeping rather than schema, and no gate here counts it as one.
 
 **An instant** — a point on the timeline: the same moment to everyone, wherever
-they read it from. MariaDB records one in a `TIMESTAMP`, which it converts to
-UTC on the way in and back to the reader's session zone on the way out.
+they read it from. Both products record one in a `TIMESTAMP`, which they convert
+to UTC on the way in and back to the reader's session zone on the way out.
 
 **A wall-clock reading** — the digits a clock showed, without the clock. A
 `DATETIME` holds exactly that and nothing about which zone produced it, so the
@@ -65,7 +72,8 @@ A repo with a second program in it — a web app beside an API — serves routes
 this gate never sees, because only the booted one carries the route log.
 
 **A consumer** — a repo whose `ci.yml` calls the wrapper. There are two, both
-named in `README.md`, and both are older than the fleet's Postgres decision.
+named in `README.md`, both older than the fleet's Postgres decision, and one per
+server product.
 
 **The pin** — the 40-character commit SHA of dev-config that this repo calls,
 gates itself with and installs, written with the release tag as a trailing

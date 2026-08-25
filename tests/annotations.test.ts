@@ -204,7 +204,7 @@ test("a table with nowhere to go is a wiring fault, raised after what it found",
 });
 
 test("an input the action forgot to pass is refused by name", async () => {
-  expect(() => inputs("db-image")).toThrow("INPUT_DB_IMAGE is not set");
+  expect(() => inputs("database-image")).toThrow("INPUT_DATABASE_IMAGE is not set");
 });
 
 test("an input's name is read in the environment's spelling", async () => {

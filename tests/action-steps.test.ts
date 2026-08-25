@@ -3,7 +3,7 @@ import { join } from "node:path";
 
 import { checkout, decoy, ranStep } from "./action-step.ts";
 import { lineage, migratesFrom } from "./lineage.ts";
-import { emptyDatabase, query } from "./mariadb.ts";
+import { DEFAULT as PRODUCT, emptyDatabase, query } from "./servers.ts";
 import { materialise } from "./tree.ts";
 
 /**
@@ -22,6 +22,12 @@ import { materialise } from "./tree.ts";
  *
  * The harness is `action-step.ts`, shared with `serving-steps.test.ts`: the
  * steps are extracted from the shipped `action.yml` and run, never transcribed.
+ *
+ * One product under all of them, and that is the whole of the argument for it:
+ * what these cases drive is the runner's environment — a cwd, a PATH, an
+ * exported variable — which is the same environment whichever server the job
+ * started. The cases that are about a server are in `replay.test.ts`,
+ * `datetime.test.ts` and `server.test.ts`, and each of those runs against both.
  */
 
 /**
@@ -33,7 +39,7 @@ const BUN = process.execPath;
 
 /** A database the gate must refuse, so that a green step is always the failure and never the expectation. */
 async function ungraded(): Promise<string> {
-  const url = await emptyDatabase();
+  const url = await emptyDatabase(PRODUCT);
   await query(url, "create table `booking` (`id` int primary key, `starts_at` datetime)");
   return url;
 }
@@ -87,7 +93,7 @@ test("a preload in the graded checkout cannot silence the DATETIME gate", async 
  * difference.
  */
 test("a DATABASE_URL exported by the graded repo cannot redirect the DATETIME gate", async () => {
-  const elsewhere = await emptyDatabase();
+  const elsewhere = await emptyDatabase(PRODUCT);
   await query(elsewhere, "create table `harmless` (`id` int primary key)");
 
   const ran = await ranStep("db-datetime", "Every instant carries its zone", {
@@ -158,8 +164,8 @@ const CREATES_THING = {
 
 const replayInputs = {
   "working-directory": ".",
-  "db-image": "mariadb:11.4",
-  "database-url": "mysql://root:mariadb@127.0.0.1:3306/app",
+  "database-image": PRODUCT.image,
+  "database-url": "mysql://root:db-gate@127.0.0.1:3306/app",
   bun: BUN,
   path: process.env["PATH"] ?? "",
 };
@@ -217,7 +223,7 @@ test("a docker the graded repo put on PATH cannot take the replay gate's dumps",
   });
 
   const ran = await ranStep("db-replay", "Replay the migrations", {
-    inputs: { ...replayInputs, "database-url": await emptyDatabase() },
+    inputs: { ...replayInputs, "database-url": await emptyDatabase(PRODUCT) },
     workspace: built,
     path: await decoy("docker"),
   });

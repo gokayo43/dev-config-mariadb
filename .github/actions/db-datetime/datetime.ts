@@ -5,8 +5,8 @@ import type { Foreign } from "../_lib/foreign.ts";
 import { databaseIn, objectsIn, rowsFrom, textIn } from "../db-replay/database.ts";
 
 /**
- * MariaDB's half of the ambiguous-instant class, and it is the opposite way
- * round from Postgres's.
+ * The MySQL family's half of the ambiguous-instant class, and it is the
+ * opposite way round from Postgres's.
  *
  * `TIMESTAMP` is the safe type here: the server converts a value to UTC on the
  * way in and back to the session's zone on the way out, so the instant survives
@@ -15,7 +15,9 @@ import { databaseIn, objectsIn, rowsFrom, textIn } from "../db-replay/database.t
  * or on the other side of a DST boundary, is a different instant, and nothing
  * fails until it does.
  *
- * So this gate is dev-config's timestamptz gate with the types swapped.
+ * So this gate is dev-config's timestamptz gate with the types swapped, and it
+ * is one gate rather than one per server product: both products this repo
+ * serves store and convert these two types the same way, probed on both pins.
  */
 
 /** A column, as `information_schema.columns` names it. */
@@ -27,13 +29,13 @@ interface Column {
 }
 
 /**
- * The one type graded, and it is one rather than a set because MariaDB's other
+ * The one type graded, and it is one rather than a set because the other
  * temporal types are not instants recorded wrongly:
  *
- * - `TIMESTAMP` is the fix, not the fault — probed on the pinned image at
- *   11.4.12: a row written as `12:00` under `time_zone = '+00:00'` reads back
- *   as `17:00` under `+05:00`, while the `DATETIME` beside it reads `12:00`
- *   either way.
+ * - `TIMESTAMP` is the fix, not the fault — probed on both pinned images, at
+ *   MariaDB 11.4.12 and MySQL 8.0.46: a row written as `12:00` under
+ *   `time_zone = '+00:00'` reads back as `17:00` under `+05:00`, while the
+ *   `DATETIME` beside it reads `12:00` either way.
  * - `DATE`, `TIME` and `YEAR` never claimed to be instants. A birthdate is a
  *   date, and grading them would ask every consumer to justify every one of
  *   them.
@@ -67,10 +69,15 @@ const WALL_CLOCK = "datetime";
  * about this gate, and pushing it into the `where` clause would leave the gate
  * unable to tell a waiver for a converted column from one for a column that is
  * gone.
+ *
+ * Each selected column is aliased to its own name rather than taken bare, which
+ * `rowsFrom` in db-replay/database.ts is where the reason for is written: the
+ * two server products label a catalogue read in different case, and an alias is
+ * the one spelling both answer under.
  */
 const COLUMN_QUERY =
-  "select table_name, column_name, data_type from information_schema.columns" +
-  " where table_schema = ? order by table_name, column_name";
+  "select table_name as table_name, column_name as column_name, data_type as data_type" +
+  " from information_schema.columns where table_schema = ? order by table_name, column_name";
 
 /** The catalogue's answer, refused unless every row carries the three names above as text. */
 function columnsFrom(rows: readonly Foreign[], database: string): Column[] {
@@ -91,8 +98,8 @@ function named({ table_name, column_name }: Column): string {
 
 /**
  * The same name as the server would match it, which is not the same rule on
- * either side of the dot. Probed on the pinned image, at the default
- * `lower_case_table_names = 0`:
+ * either side of the dot. Probed on the pinned images, at the default
+ * `lower_case_table_names = 0` both of them ship on Linux:
  *
  * - a column is case-insensitive — `select shop.OPENS_AT` reads `opens_at`, and
  *   a table holding both is refused with `ERROR 1060 Duplicate column name`, so

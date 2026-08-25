@@ -1,8 +1,9 @@
-# dev-config-mariadb
+# dev-config-db
 
-The MariaDB extension of `gokayo43/dev-config`, for the two legacy repos whose
-database is MariaDB. `CONTEXT.md` is the vocabulary; `README.md` is the
-reference for how a consumer calls this workflow and what each job does.
+The MySQL-family extension of `gokayo43/dev-config`, for the two legacy repos
+whose database is not Postgres — one on MariaDB, one on MySQL 8. `CONTEXT.md` is
+the vocabulary; `README.md` is the reference for how a consumer calls this
+workflow and what each job does.
 
 ## Canon
 
@@ -15,7 +16,8 @@ thing that could not live there.
 
 **It only adds.** No gate here loosens one of theirs, and the static half is a
 call rather than a fork. A change that would be better made in dev-config is
-made in dev-config: this repo is for what is MariaDB-shaped and nothing else.
+made in dev-config: this repo is for what is MySQL-family-shaped and nothing
+else.
 Anything that reads as "the base should have this too" is an issue there, not a
 second implementation here.
 
@@ -55,8 +57,12 @@ that has been improved says so at the line that improved it.
 - `.github/workflows/check.yml` — the wrapper consumers call. Three jobs: the
   call into dev-config's `check.yml` with `database: false`, the always-running
   `refusals` job that fails a call asking for a database-job input without the
-  job, and `database`, which is every MariaDB gate this repo has — one job, and
-  CONTEXT.md's entry for the term says why there will stay one. Every gate step
+  job, and `database`, which is every database gate this repo has — one job, and
+  CONTEXT.md's entry for the term says why there will stay one. Its server is a
+  **step** rather than a service container, because the image is the consumer's
+  `database-image` input and dev-config's pin gate refuses an expression in
+  `services` (dev-config#68); `docs/gates/db-server.md` carries the argument and
+  what it costs. Every gate step
   in it is handed the database and the interpreter by a step that reads them at
   the top of that job, before a line of the graded repo's own code has run, and
   the search path too wherever the step resolves a program by name. `#2`, `#3`
@@ -68,9 +74,10 @@ that has been improved says so at the line that improved it.
   own SHA, so the wrapper's pin is always one commit behind whatever is under
   review.
 - `.github/actions/` — the gates themselves, each a `<name>.ts` the suite drives
-  and a `<name>.main.ts` the action runs. Three directories, all steps of the
-  one database job: `db-replay` (`#2`), `db-datetime` (`#5`) and `db-serving`
-  (`#3`, the boot, probe and ramp). Each splits what talks to something from
+  and a `<name>.main.ts` the action runs. Four directories, all steps of the one
+  database job: `db-server` (the server the rest of them grade), `db-replay`
+  (`#2`), `db-datetime` (`#5`) and `db-serving` (`#3`, the boot, probe and
+  ramp). Each splits what talks to something from
   what is pure, so that a verdict can be driven without the thing under it —
   `db-replay/database.ts` and `db-replay/schema.ts`, `db-serving/ramp.ts` and
   `db-serving/capacity.ts`; `db-datetime` reads its catalogue through the first
@@ -102,8 +109,9 @@ that has been improved says so at the line that improved it.
   `database: false`, only one job calls that workflow at all, what the README
   tables and what it says is refused cover dev-config's input surface exactly,
   the four carriers of the dev-config pin agree, every action pin names a commit
-  this repo carries AND one whose `.github/actions` is the tree here now, and
-  the server image is written once as far as a reader is concerned.
+  this repo carries AND one whose `.github/actions` is the tree here now, every
+  step taking a server image is handed the caller's one input, and no service
+  image is an expression — which is the rule that decided the server is a step.
   `refusals.test.ts` runs the wrapper's own `run:` block — extracted from the
   shipped YAML rather than transcribed, with the environment derived from its
   own `env:` block — over the whole truth table of the rule this workflow adds.
@@ -114,12 +122,18 @@ that has been improved says so at the line that improved it.
   blocks against a checkout that fights back — a `bunfig.toml` preloading its
   own code, a `DATABASE_URL` naming a database of its own, a `bun` or a `docker`
   of its own first on PATH — both through the one harness in `action-step.ts`.
+  `server.test.ts` grades the step that replaced the service container, which is
+  the one piece of wiring the runner used to guarantee: a server that never
+  answers, one that came up and died, and a container a killed run left behind.
   `entrypoints.test.ts` is the lane that runs what GitHub runs: every
   `*.main.ts` as a process, under a wall clock, asserting it **ends** — the
   property no in-process test can see, and the one a gate that starts a
   long-lived app gets wrong. The rest of the suite drives the gates against the
-  real thing — MariaDB containers it starts and removes itself, and a real app
-  process on a real port — which is why `ci.yml` sets `test-network`.
+  real thing — a container per server product, started through the shipped
+  `db-server` and removed by `tests/servers.ts`, and a real app process on a
+  real port — which is why `ci.yml` sets `test-network`. Every case that touches
+  a server runs against both products; the two that cannot are marked where they
+  stand, and each is the dialect rather than the gate.
 
   The one thing the suite cannot run has a job of its own in `ci.yml`: nothing
   in `bun test` may fetch a binary, so the shipped k6 ramp is executed by
@@ -127,15 +141,34 @@ that has been improved says so at the line that improved it.
   inside k6" is why the linter and knip skip that script, and it is not a reason
   for nothing to have run it.
 
-## The server this repo is written against
+## The servers this repo serves
 
-MariaDB 11.4, because that is what `nfp-elysia` runs (probed: `11.4.12-MariaDB`).
-`wmstcs`, the other repo `README.md` names, runs **MySQL 8.0.32** — same dialect
-family, different server, and a different dump client binary. There is no lane
-for it and the pinned image refuses it;
-[#9](https://github.com/gokayo43/dev-config-mariadb/issues/9) is that decision,
-and it is blocked on [dev-config#68](https://github.com/gokayo43/dev-config/issues/68),
-which is why the obvious fix — a `db-image` input — could not be written.
+Two products, because the two consumers run two: `nfp-elysia` is MariaDB 11.4
+(probed: `11.4.12-MariaDB`) and `wmstcs` is **MySQL 8.0.32** — the owner's
+decision on `#9` was that wmstcs stays there, so serving both is a requirement
+rather than a question.
+
+A consumer declares which by pinning `database-image`; nothing here infers a
+product from a reference, and the default is the MariaDB build this repo
+certifies. Only three things in the tree had anything to decide about the
+difference, and each says so where it stands:
+
+- **the dump client has no shared name** — MariaDB 11.4 ships `mariadb-dump`
+  with no `mysqldump`, a MySQL 8 image ships only `mysqldump` — so `database.ts`
+  asks the image which it has, once, before anything is migrated;
+- **a catalogue read comes back in different case** — MySQL 8 labels
+  `information_schema` columns upper case, MariaDB lower — so every query here
+  aliases what it selects, and `rowsFrom` is where that is written down;
+- **MySQL 8's default authentication needs an encrypted socket** — Bun refuses
+  the RSA public-key retrieval that `caching_sha2_password` otherwise wants — so
+  `connection` opens every connection with TLS the server's own certificate
+  cannot be verified against, which MariaDB is indifferent to.
+
+Everything else — the types the DATETIME gate grades, the dump's normalisation,
+the serving gate — is the same on both, and the suite proves it by running every
+server-touching case against a real one of each in one `bun test`. The MySQL pin
+the suite certifies against lives in `tests/servers.ts` and is deliberately 8.0:
+it tracks what `wmstcs` runs rather than what MySQL ships.
 
 ## Moving the dev-config pin
 
@@ -151,7 +184,7 @@ digest against dev-config's default branch, tag for the two `uses:` — so a bum
 raised while dev-config's `main` sits ahead of its latest tag arrives with the
 carriers disagreeing, and the suite fails on that PR. Point all four at the
 tagged commit by hand when it happens.
-[#8](https://github.com/gokayo43/dev-config-mariadb/issues/8) is the decision
+[#8](https://github.com/gokayo43/dev-config-db/issues/8) is the decision
 about ending that, including why the obvious fix — a tag in the manifest — is
 refused by dev-config's own contract.
 

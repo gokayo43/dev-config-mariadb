@@ -12,7 +12,7 @@ import {
 /**
  * The wrapper as both suites here read it. Two of them ask about the same file
  * for different reasons — `wrapper-inputs.test.ts` grades what it declares and
- * hands on, `mariadb.ts` needs the server the shipped job actually runs — and
+ * hands on, `servers.ts` needs the server the shipped job actually runs — and
  * the file is the one place either of them should be reading that from.
  */
 export const root = dirname(import.meta.dir);
@@ -49,30 +49,41 @@ export function stringsIn(document: unknown): string[] {
   return Object.values(document).flatMap((node: unknown) => stringsIn(node));
 }
 
+/** The input a consumer declares its server with, and the one input the suite reads a value out of. */
+export const SERVER_IMAGE = "database-image";
+
 /**
- * The image the workflow hands the replay gate, wherever in it that step sits.
- * Walked rather than addressed by job and step index, so that moving the step
- * does not move this: what is wanted is "the image the shipped gate is given",
- * not where it is written.
+ * Every image a job of the wrapper declares as a service — read at the one
+ * depth a service image sits at, never walked. A walk would take any string
+ * that looks like a reference with it, including the expression the server now
+ * reaches its steps as, and every question asked of this would then be asking
+ * about that.
  */
-function imagePassedIn(document: unknown): string | undefined {
-  if (isList(document)) {
-    return document.map((node) => imagePassedIn(node)).find((found) => found !== undefined);
-  }
-  if (!isForeign(document)) return undefined;
-  const given = textAt(mapAt(document, "with"), "db-image");
-  if (given !== undefined) return given;
-  return Object.values(document)
-    .map((node: unknown) => imagePassedIn(node))
-    .find((found) => found !== undefined);
+export async function serviceImages(): Promise<string[]> {
+  return Object.values(mapAt(await wrapperDocument(), "jobs")).flatMap((job) =>
+    Object.values(mapAt(job, "services")).flatMap((service) => {
+      const image = textAt(service, "image");
+      return image === undefined ? [] : [image];
+    }),
+  );
 }
 
-/** The image the gate is given, refused rather than defaulted: a suite cannot invent the server it grades against. */
-export async function dbImage(): Promise<string> {
-  const found = imagePassedIn(await wrapperDocument());
-  if (found === undefined) {
+/**
+ * The server a consumer who declares nothing gets, read off the wrapper's own
+ * declaration.
+ *
+ * Refused rather than defaulted here: a suite cannot invent the server it
+ * grades against, and the whole worth of driving these gates against a real
+ * server is that it is the one the shipped job runs.
+ */
+export async function defaultServerImage(): Promise<string> {
+  const declared = mapAt(mapAt(mapAt(await wrapperDocument(), "on"), "workflow_call"), "inputs")[
+    SERVER_IMAGE
+  ];
+  const found = textAt(declared, "default");
+  if (found === undefined || found === "") {
     throw new Error(
-      `no db-image is passed to the db-replay action in ${WRAPPER} — the suite drives the gate against the image the shipped job runs, and cannot find it`,
+      `${WRAPPER} declares no default for ${SERVER_IMAGE} — the suite drives these gates against the server a consumer who writes nothing gets, and cannot find it`,
     );
   }
   return found;

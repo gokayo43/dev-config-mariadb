@@ -1,9 +1,11 @@
 # The replay gate
 
 `database: true` adds the `database` job, and these are its first steps: an
-empty MariaDB — plus a Redis, for the repos whose migrator imports an
-environment module that wants one — the consumer's own `bun run db:migrate` onto
-it, then the same command again, and the two schemas compared. What the same job
+empty database on the server the consumer pinned — plus a Redis, for the repos
+whose migrator imports an environment module that wants one — the consumer's own
+`bun run db:migrate` onto it, then the same command again, and the two schemas
+compared. Which server that is, and how it gets there, is
+[db-server.md](db-server.md). What the same job
 does afterwards, with the database these steps built, is
 [db-serving.md](db-serving.md).
 
@@ -19,18 +21,20 @@ what turns that into a red build.
 The migrations then run a second time, and the gate is not the exit code but the
 schema either side of it. An exit code only says the second run did not error;
 the dump says the database came out in the same state, which a runner with no
-journal can exit 0 without doing — MariaDB accepts an unnamed `ADD CHECK` twice
-and names the second one for itself, and neither run complains. With a
+journal can exit 0 without doing — both server products accept an unnamed
+`ADD CHECK` twice and name the second one for themselves, and neither run
+complains. With a
 journalled migrator the pass is cheap and proves the journal is honest; with
 anything that re-executes SQL, it proves the SQL is re-runnable.
 
 ## What "the same schema" is
 
-`mariadb-dump --no-data --skip-dump-date --routines --events --triggers`, run
-twice, compared line by line in the order the dump wrote them. `mariadb-dump`
-renders the catalogue in a fixed order, so two dumps holding the same statements
-in a different arrangement really are two different databases; nothing is sorted
-and nothing is reordered.
+The image's own dump client with
+`--no-data --skip-dump-date --routines --events --triggers`, run twice, compared
+line by line in the order the dump wrote them. Both products' clients render the
+catalogue in a fixed order, so two dumps holding the same statements in a
+different arrangement really are two different databases; nothing is sorted and
+nothing is reordered.
 
 Routines and events are asked for because they are not in the tool's defaults. A
 schema that left them out would call a repo's stored procedures unchanged
@@ -97,24 +101,38 @@ upstream.
 
 ## Where the client comes from
 
-The dump is taken by the `mariadb-dump` inside the **same image the job runs the
-server from**, through `docker run --network host`. Two reasons, and the second
-is the one that matters:
+The dump is taken by the client inside the **same image the job runs the server
+from**, through `docker run --network host`. Two reasons, and the second is the
+one that matters:
 
-- nothing on a GitHub runner ships a MariaDB client at all, and an `apt install`
-  would put an unpinned package inside a gate whose whole argument is that what
-  it runs is pinned;
+- nothing on a GitHub runner ships a client for either product, and an
+  `apt install` would put an unpinned package inside a gate whose whole argument
+  is that what it runs is pinned;
 - a client of another major renders a schema it half understands. Taking it from
   the server's own image makes them one build rather than two versions that
   agree today. dev-config carries the Postgres half of this as
   [dev-config#64](https://github.com/gokayo43/dev-config/issues/64).
 
-The image is written twice in `check.yml` — once as the service, once as the
-`db-image` the action is handed — because GitHub gives a service image no way to
-read a value declared anywhere else. `tests/wrapper-inputs.test.ts` is what holds
-the two to one digest; a drift between them is the worst kind of quiet, since
+The image is one value in `check.yml` — the consumer's `database-image` input,
+handed to the step that starts the server and to this gate.
+`tests/wrapper-inputs.test.ts` is what holds every step that takes an image to
+that one value; two literals drifting apart would be the worst kind of quiet,
+since
 the gate would render one major's catalogue with another major's client and
 compare the two renderings to each other.
+
+### Which client, when the two products name it differently
+
+There is no binary name both products use. MariaDB 11.4 ships `mariadb-dump`
+and no `mysqldump` symlink at all; a MySQL 8 image ships `mysqldump` and no
+`mariadb-dump`. Both probed on the images this repo certifies.
+
+So the gate asks the image rather than the reference: one `docker run` looks for
+`mariadb-dump`, then for `mysqldump`, and whichever the image answers with is
+what takes both dumps. Nothing reads a product out of the image's name, which is
+deliberate — a digest can come from any registry path, a mirror or a private
+copy, and the name would be a guess where the image is a fact. An image that
+ships neither is refused by name, before a migration has run.
 
 ## What the gate refuses before it replays anything
 
@@ -169,14 +187,17 @@ gets trusted for things it never checked.
   migration that has already been applied somewhere is never re-read by a
   journalled migrator, so a rewritten one changes what a fresh database gets and
   nothing else — that is the upgrade path, and it is
-  [#4](https://github.com/gokayo43/dev-config-mariadb/issues/4).
+  [#4](https://github.com/gokayo43/dev-config-db/issues/4).
 - **Rows.** `--no-data`: what a migration writes into a table is invisible here,
   and two databases whose schemas match can hold entirely different data.
-- **A migration killed midway.** Both runs go to completion. MariaDB has no
+- **A migration killed midway.** Both runs go to completion. Neither product has
   transactional DDL, so a migration interrupted between two statements leaves
   half of itself applied and nothing here exercises that.
 - **Two of them at once.** There is one writer, so nothing about racing
   migrators is exercised.
-- **Any server that is not the pinned image.** The consumer's production MariaDB
+- **Any server that is not the pinned image.** The consumer's production server
   is a different build with a different configuration, and a schema that applies
-  on one can fail on the other over `sql_mode` alone.
+  on one can fail on the other over `sql_mode` alone. That is also the whole of
+  what pinning the image buys: it is the consumer's declaration of which product
+  and which build these gates speak for, and a consumer who pins a build their
+  production is not on has certified that build.

@@ -25,21 +25,29 @@ const SUMMARY = join(import.meta.dir, "k6-summary.json");
 
 /** A case per entry point, and the test below fails when the tree grows one this file has not been told about. */
 const CASES = {
+  // A URL nothing is listening on and an image that is never reached: the step
+  // refuses the account before it asks docker anything, which is enough to prove
+  // the process ends.
+  "db-server/server.main.ts": async () => ({
+    INPUT_DATABASE_IMAGE: "mariadb:11.4",
+    DATABASE_URL: "mysql://app:db-gate@127.0.0.1:13306/app",
+  }),
+
   "db-replay/replay.main.ts": async () => ({
     // A project with no package.json, which the gate refuses before it opens a
     // connection — so this case needs no server to prove the process ends.
     INPUT_PROJECT: await materialise({}),
-    INPUT_DB_IMAGE: "mariadb:11.4",
+    INPUT_DATABASE_IMAGE: "mariadb:11.4",
     INPUT_FROM_EMPTY: join(await materialise({}), "from-empty.schema"),
     INPUT_REPLAYED: join(await materialise({}), "replayed.schema"),
-    DATABASE_URL: "mysql://root:mariadb@127.0.0.1:13306/app",
+    DATABASE_URL: "mysql://root:db-gate@127.0.0.1:13306/app",
   }),
 
   "db-datetime/datetime.main.ts": async () => ({
     // A database nothing is listening on: the gate opens a connection, fails to,
     // and says so through `entry`. What this case is about is that it comes
     // back — a gate that dies on a refused connection must still end the step.
-    DATABASE_URL: "mysql://root:mariadb@127.0.0.1:13306/app",
+    DATABASE_URL: "mysql://root:db-gate@127.0.0.1:13306/app",
     INPUT_DATETIME_ALLOWLIST: "",
   }),
 

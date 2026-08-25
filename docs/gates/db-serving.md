@@ -21,9 +21,9 @@ because the run that failed on the way to a number is exactly the run whose
 partial evidence somebody wants.
 
 They run as steps of the same job the replay runs in, rather than as a job of
-their own, because the migrated database is that job's service container — the
-`database` job is the only one there is, and CONTEXT.md's entry for the term
-says why.
+their own, because the migrated database is a container that job started and
+holds — the `database` job is the only one there is, and CONTEXT.md's entry for
+the term says why.
 
 ## Boot
 
@@ -117,8 +117,8 @@ reach its own app here either. Its `PATH` is the job's, as it stood after
 `probe-command` is one command of the repo's own, run against the booted app
 after it answers its health route and before the ramp: a real process, a real
 HTTP client, a real migrated database, nothing stubbed. Its contract is
-dev-config's, unchanged, because a MariaDB repo graded more leniently than a
-Postgres one is this repo breaking the rule it exists to keep:
+dev-config's, unchanged, because a MySQL-family repo graded more leniently than
+a Postgres one is this repo breaking the rule it exists to keep:
 
 - **stdout is the verdict** — every line the command writes there is one
   problem, whatever it exits with;
@@ -179,8 +179,8 @@ this exists to catch. What a repo still chooses is _what_ the ramp hits —
 `route-allowlist` for whatever neither can reach.
 
 **The number is a trend line, not a capacity claim.** GitHub's runners vary by
-machine, by neighbour and by hour, and the app is sharing one with a MariaDB, a
-Redis and whatever else the job started. What it is good for is noticing that a
+machine, by neighbour and by hour, and the app is sharing one with a database
+server, a Redis and whatever else the job started. What it is good for is noticing that a
 change moved the number by an order of magnitude. The number that answers "how
 much load does this hold" is a ramp against the deployed shape, which testing.md
 asks for before a surface takes real users and again after a hot-path change;

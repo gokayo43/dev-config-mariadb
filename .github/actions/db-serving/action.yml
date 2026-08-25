@@ -1,6 +1,6 @@
-name: MariaDB serving gate
+name: Serving gate
 description: >-
-  Boots the calling repo's app against the MariaDB the replay step migrated,
+  Boots the calling repo's app against the database the replay step migrated,
   polls its health route, runs the repo's own probe against it where there is
   one, and ramps it with the route-coverage floor. Every step reads the app from
   one place — the health URL — and the database from the environment the calling
