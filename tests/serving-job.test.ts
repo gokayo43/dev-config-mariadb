@@ -60,6 +60,7 @@ function runnerFiles(document: Foreign): string[] {
 const wrapper = await wrapperDocument();
 const serving = await action("db-serving");
 const replay = await action("db-replay");
+const upgrade = await action("db-upgrade");
 
 /** The steps of the one job that builds a database and runs an app against it. */
 function jobSteps(): Foreign[] {
@@ -84,11 +85,12 @@ test("every file the gates leave in the runner is in the artifact the job upload
   const upload = stepUsing("actions/upload-artifact");
   const path = textAt(mapAt(upload, "with"), "path") ?? "";
 
-  const written = [...runnerFiles(serving), ...runnerFiles(replay)];
-  // The two schemas the replay compared, the app's own output, the k6 summary
-  // and both route-log snapshots: six files, and the whole reason the upload
-  // belongs to the job rather than to either action.
-  expect(written).toHaveLength(6);
+  const written = [...runnerFiles(serving), ...runnerFiles(replay), ...runnerFiles(upgrade)];
+  // The two schemas the replay compared, the schema the upgrade path reached,
+  // the app's own output, the k6 summary and both route-log snapshots: seven
+  // files, and the whole reason the upload belongs to the job rather than to any
+  // one action.
+  expect(written).toHaveLength(7);
   expect(written.filter((file) => !path.includes(file))).toEqual([]);
 
   // The run that failed on the way to a number is exactly the run whose partial

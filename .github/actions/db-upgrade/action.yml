@@ -1,0 +1,80 @@
+name: Upgrade path gate
+description: >-
+  Replays the base ref's migrations into a database of its own, applies this
+  branch's on top, and requires the result to be the schema a fresh replay
+  already built. The duty dev-config's check.yml leaves to a workflow that
+  passes `database: external`, for the products this repo serves.
+  docs/gates/db-upgrade.md is what it proves and what it cannot catch.
+
+inputs:
+  working-directory:
+    description: >-
+      Where the project lives, relative to the checkout. The migrator runs
+      there and the lineage is read there; this gate does not run there itself,
+      and passes it as an explicit path.
+    default: .
+  database-image:
+    description: >-
+      The image the calling job started the server from, pinned by digest. The
+      dump's client is taken from this same image, so that the two schemas this
+      gate compares are one client's rendering of two databases rather than two
+      clients' renderings.
+    required: true
+  database-url:
+    description: >-
+      The database the replay built from empty, as the calling job read it
+      before running a line of the graded repo's code. It is what an upgrade has
+      to arrive at, and its server is where this gate creates the database it
+      replays into.
+    required: true
+  bun:
+    description: >-
+      The absolute path to the interpreter this gate runs under, from the same
+      reading. A bare `bun` is resolved through a PATH the graded repo's own
+      steps can prepend to, which replaces this gate with a program that exits 0.
+    required: true
+  path:
+    description: >-
+      The search path the gate's own tools are found on, from the same reading —
+      `git`, which every read of the base ref goes through, and `docker`, which
+      runs the pinned image the dump's client comes from.
+    required: true
+
+# The dump this step writes is uploaded by the JOB rather than by this action;
+# check.yml's upload step carries the argument and reads the name.
+runs:
+  using: composite
+  steps:
+    - name: A deployed database reaches this schema
+      shell: bash
+      # The action's own checkout, never the graded repo's. `bun` reads a
+      # top-level `preload` out of a `bunfig.toml` in its working directory, so a
+      # gate running in the graded checkout runs whatever that repo's bunfig
+      # names, before a line of the gate. The migrator still runs in the project
+      # below, by the path this step hands the gate.
+      working-directory: ${{ github.action_path }}
+      env:
+        INPUT_DATABASE_IMAGE: ${{ inputs['database-image'] }}
+        INPUT_UPGRADED: ${{ runner.temp }}/upgraded-from-base.schema
+        INPUT_BUN: ${{ inputs.bun }}
+        PATH: ${{ inputs.path }}
+        # What the base ref is derived from, read here rather than passed by the
+        # calling job: they are facts about the run rather than settings a
+        # consumer writes, and docs/gates/db-upgrade.md carries the table saying
+        # which commit each one makes the base.
+        INPUT_BASE_REF: ${{ github.base_ref }}
+        INPUT_BEFORE: ${{ github.event.before }}
+        # `github.workspace` is an expression context rather than a variable, so
+        # nothing a step writes reaches it — which is what makes this an
+        # explicit path and not the inheritance the cwd above just gave up.
+        INPUT_PROJECT: ${{ github.workspace }}/${{ inputs['working-directory'] }}
+        # Declared by this step, which is what makes it this step's: the runner
+        # overlays a step's own `env:` over the environment it inherited, so a
+        # variable of this name written into $GITHUB_ENV earlier does not reach
+        # the gate.
+        DATABASE_URL: ${{ inputs['database-url'] }}
+      run: |
+        set -euo pipefail
+        # shellcheck source=/dev/null
+        . "$GITHUB_ACTION_PATH/../_lib/gate.sh"
+        gate upgrade.main.ts

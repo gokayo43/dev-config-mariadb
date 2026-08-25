@@ -1,6 +1,6 @@
 # The replay gate
 
-`database: true` adds the `database` job, and these are its first steps: an
+`database: external` adds the `database` job, and these are its first steps: an
 empty database on the server the consumer pinned — plus a Redis, for the repos
 whose migrator imports an environment module that wants one — the consumer's own
 `bun run db:migrate` onto it, then the same command again, and the two schemas
@@ -43,24 +43,33 @@ set that builds only a routine a migration set that built nothing.
 
 ### What is taken out, and why it is one class
 
-A dump carries three lines that are not schema. They are one kind of fact —
-**how many values an object has handed out, and when an object was last
-created** — and each is rewritten by an ordinary migration doing an ordinary
-thing, so a comparison that kept them refuses a repo that is fine.
+A dump carries lines that are not schema, of two kinds. The first is **how many
+values an object has handed out, and when an object was last created**: each is
+rewritten by an ordinary migration doing an ordinary thing, so a comparison that
+kept them refuses a repo that is fine. The second is **which database the dump
+came from**, which this gate never meets — both of its dumps are of one database
+— and [the upgrade gate](db-upgrade.md) cannot avoid, since a database built
+fresh and one built by upgrading are two databases by construction.
 
-| Line                                 | What it records                                                                                                                                                                                                                                                                      |
-| ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `) ENGINE=… AUTO_INCREMENT=<n> …`    | the id the table would hand out next. A migration that seeds a row moves it, and so does a migrator writing its own journal. Taken out on the line that closes the `CREATE TABLE` — a column's own `AUTO_INCREMENT` carries no `=`, so nothing inside a table definition is touched. |
-| `DO SETVAL(<seq>, <next>, <cycles>)` | the value a sequence would hand out next. One `NEXTVAL` moves it, by a thousand at the default cache of 1000. The sequence's own shape — start, min, max, increment, cache, cycle — is on the `CREATE SEQUENCE` line above and is compared in full.                                  |
-| `EVENT … STARTS '<stamp>'`           | when the event was created. An event with no explicit `STARTS` is stamped with its creation time, and the idiomatic re-runnable migration for one is `DROP EVENT IF EXISTS` followed by `CREATE EVENT` — which re-creates it, and re-stamps it, on every replay.                     |
+| Line                                                  | What it records                                                                                                                                                                                                                                                                      |
+| ----------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `) ENGINE=… AUTO_INCREMENT=<n> …`                     | the id the table would hand out next. A migration that seeds a row moves it, and so does a migrator writing its own journal. Taken out on the line that closes the `CREATE TABLE` — a column's own `AUTO_INCREMENT` carries no `=`, so nothing inside a table definition is touched. |
+| `DO SETVAL(<seq>, <next>, <cycles>)`                  | the value a sequence would hand out next. One `NEXTVAL` moves it, by a thousand at the default cache of 1000. The sequence's own shape — start, min, max, increment, cache, cycle — is on the `CREATE SEQUENCE` line above and is compared in full.                                  |
+| `EVENT … STARTS '<stamp>'`                            | when the event was created. An event with no explicit `STARTS` is stamped with its creation time, and the idiomatic re-runnable migration for one is `DROP EVENT IF EXISTS` followed by `CREATE EVENT` — which re-creates it, and re-stamps it, on every replay.                     |
+| `-- Host: … Database: <name>`                         | which database the dump was taken from — the header line. Not the schema, and the two gates that compare dumps of two different databases would otherwise part at it on every run.                                                                                                   |
+| `-- Dumping (events\|routines) for database '<name>'` | the same name again, in the two section headings. Both products write all three lines and no others: one schema dumped from two differently named databases differs in exactly these.                                                                                                |
 
 The membership was swept rather than guessed. A database carrying a table, a
 sequence, a view, a procedure, a function, a trigger and an event, put twice
 through the re-runnable idioms a migration is written in — `CREATE TABLE IF NOT
 EXISTS` with an insert, `CREATE OR REPLACE VIEW`, `DROP … IF EXISTS` before each
-`CREATE` — moved exactly those three lines and no others. Every `DEFINER`, every
-`sql_mode` block, the sequence's own definition and the whole compatibility
-preamble came out byte-identical.
+`CREATE` — moved exactly the first three lines and no others. Every `DEFINER`,
+every `sql_mode` block, the sequence's own definition and the whole
+compatibility preamble came out byte-identical. The same sweep was run again
+against the MySQL 8 pin, where the same two of those three moved and nothing a
+MySQL dump carries and a MariaDB one does not; and a second sweep dumped one
+schema from two differently named databases on both pins, which is where the
+last two lines of the table come from.
 
 That is the measurement, and it is a measurement of **the comparison this gate
 actually makes**: two dumps with a migrator run between them, not two dumps of

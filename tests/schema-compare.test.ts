@@ -217,11 +217,46 @@ test("what an event actually does is still compared", () => {
   ).not.toBeUndefined();
 });
 
+/**
+ * The rule the upgrade gate needed and the replay gate never could: a dump names
+ * the database it was taken from, in its header, and that is a fact about where
+ * the schema was read rather than about the schema. Two dumps of one database —
+ * which is all the replay gate ever compares — agree there by construction; the
+ * upgrade gate compares a fresh database with one built by upgrading, and those
+ * are two databases by construction.
+ *
+ * The most plausible wrong implementation is the one this repo shipped until the
+ * upgrade gate existed: leave the header alone. Every run of that gate then
+ * reports the two database names as the difference, on every repo, and the real
+ * comparison never happens.
+ */
+test("the database a dump was taken from is not part of the schema", () => {
+  const header = (database: string): string =>
+    `-- MariaDB dump 10.19\n--\n-- Host: 127.0.0.1    Database: ${database}\n--\nCREATE TABLE \`thing\` (\n`;
+
+  expect(
+    compare(schemaFrom("fresh", header("app")), schemaFrom("upgraded", header("upgrade_path_9f"))),
+  ).toBeUndefined();
+});
+
+test("a real difference under a differing header is still reported", () => {
+  const dumped = (database: string, table: string): string =>
+    `-- Host: 127.0.0.1    Database: ${database}\nCREATE TABLE \`${table}\` (\n`;
+
+  const found = compare(
+    schemaFrom("fresh", dumped("app", "thing")),
+    schemaFrom("upgraded", dumped("upgrade_path_9f", "other")),
+  );
+
+  expect(found?.headline).toContain("thing");
+  expect(found?.headline).toContain("other");
+});
+
 // Every rule the module carries has to be justifiable on the page that lists
 // them, so the list is what the page is written from rather than a second copy
 // of it.
 test("every exclusion says what it records instead of schema", () => {
-  expect(EXCLUSIONS).toHaveLength(3);
+  expect(EXCLUSIONS).toHaveLength(5);
   for (const records of EXCLUSIONS) expect(records).not.toBe("");
 });
 

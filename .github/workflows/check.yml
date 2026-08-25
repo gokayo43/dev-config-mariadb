@@ -5,10 +5,11 @@ name: Check
 #
 # Everything static is dev-config's, unchanged: this workflow calls that one
 # rather than restating any of it, so a gate lands here when the pin below moves
-# and never because a copy drifted. The `database: false` in that call is not a
-# preference — dev-config's database job is Postgres, and the database job this
-# workflow adds is what a consumer gets instead. This workflow's own `database`
-# input turns that on and never reaches that call.
+# and never because a copy drifted. `database: external` is the value their
+# check.yml has for exactly this arrangement — their database job is Postgres,
+# and a workflow wrapping theirs runs the database gates in its place — so the
+# input is handed on rather than answered here, and the job below is what a
+# consumer gets instead.
 on:
   workflow_call:
     inputs:
@@ -44,6 +45,9 @@ on:
       stack-allowlist:
         type: string
         default: ""
+      data-jobs-external:
+        type: string
+        default: ""
       test-network:
         type: string
         default: ""
@@ -52,13 +56,16 @@ on:
         default: ""
       database:
         description: >-
-          Replay the repo's own migrations onto an empty database, twice,
-          compare the schema either side, then boot the app against the result,
-          probe it where the repo has a probe, and ramp it. This is a job of
-          this repo's own and this input never reaches dev-config's check.yml,
-          whose job of that name is Postgres.
-        type: boolean
-        default: false
+          `external` runs this workflow's own database job — the repo's
+          migrations replayed onto an empty database on the server it pinned,
+          the upgrade path where it asks for one, the DATETIME catalogue, and
+          the app booted, probed and ramped against the result. It is
+          dev-config's own spelling and its own value for exactly this: a
+          workflow wrapping theirs runs the database gates in that job's place.
+          `none` is a repo with no schema. `postgres` is refused here rather
+          than served — a Postgres repo calls dev-config directly.
+        type: string
+        default: none
       database-image:
         description: >-
           The server that job runs, as an image pinned by digest — a MariaDB or
@@ -70,6 +77,17 @@ on:
           who runs that writes nothing.
         type: string
         default: mariadb:11.4@sha256:4f1d8d202fcf7bcb3902f63af09f9c1a050c2922a89652f22abaec0d4f015e83
+      upgrade-gate:
+        description: >-
+          Also prove that a database built from the base ref's migrations and
+          upgraded by this branch's reaches the schema a fresh one gets — for
+          repos whose database is deployed somewhere. dev-config's check.yml
+          stopped asking this of a caller passing `database: external`, on the
+          argument that a workflow replacing the database gates carries the
+          upgrade duty for its own dialects; this input is that duty for
+          MariaDB and MySQL 8. docs/gates/db-upgrade.md is what it proves.
+        type: boolean
+        default: false
       db-gate-evidence:
         type: string
         default: ""
@@ -109,7 +127,7 @@ permissions:
 
 jobs:
   static:
-    uses: gokayo43/dev-config/.github/workflows/check.yml@602fca2f24341ef9c445b4a6f750e887cf156f37 # v0.50.1
+    uses: gokayo43/dev-config/.github/workflows/check.yml@d1f756aacca92fd99a66ba3370f290c41cb36a22 # v0.51.5
     with:
       build: ${{ inputs.build }}
       affected: ${{ inputs.affected }}
@@ -118,14 +136,16 @@ jobs:
       mutation-floor: ${{ inputs['mutation-floor'] }}
       contract-exemptions: ${{ inputs['contract-exemptions'] }}
       stack-allowlist: ${{ inputs['stack-allowlist'] }}
+      data-jobs-external: ${{ inputs['data-jobs-external'] }}
       test-network: ${{ inputs['test-network'] }}
       test-suite-evidence: ${{ inputs['test-suite-evidence'] }}
-      # A literal, always. Every other value in this call is a caller's input
-      # handed on; this one is the workflow's own answer, and the input of the
-      # same name above decides a job here rather than that one. README.md names
-      # the inputs that reach neither, and the suite holds that list to what
-      # dev-config declares at the pin above.
-      database: false
+      # Handed on rather than answered here, which it was not always: while
+      # dev-config's `database` was a boolean meaning "run our Postgres job",
+      # this workflow had to answer it with a literal `false` and keep an input
+      # of the same name for its own job — one spelling, two questions. Their
+      # enum has a value that means "a workflow wrapping this one runs them",
+      # so the two questions became one and the literal died with them.
+      database: ${{ inputs.database }}
 
   # Every input aimed at the database job is a request that job would otherwise
   # never see, and a gate nobody notices is off is the worst kind — so a call
@@ -143,6 +163,7 @@ jobs:
       - env:
           DATABASE: ${{ inputs.database }}
           DATABASE_IMAGE: ${{ inputs['database-image'] }}
+          UPGRADE_GATE: ${{ inputs['upgrade-gate'] }}
           DB_GATE_EVIDENCE: ${{ inputs['db-gate-evidence'] }}
           START_COMMAND: ${{ inputs['start-command'] }}
           HEALTH_URL: ${{ inputs['health-url'] }}
@@ -155,6 +176,10 @@ jobs:
           # cannot read an input's declared default. tests/refusals.test.ts
           # holds the pairs together; `changed_from_default` below is why they
           # are compared at all.
+          # A boolean has no empty spelling either, so it is compared with its
+          # declared default like the two below rather than tested for being
+          # non-empty. Quoted, because what a step reads is always a string.
+          UPGRADE_GATE_DEFAULT: "false"
           START_COMMAND_DEFAULT: bun run start
           HEALTH_URL_DEFAULT: http://localhost:3000/api/health
           DATABASE_IMAGE_DEFAULT: mariadb:11.4@sha256:4f1d8d202fcf7bcb3902f63af09f9c1a050c2922a89652f22abaec0d4f015e83
@@ -168,6 +193,10 @@ jobs:
             wrong=1
           }
 
+          # `external` is the value that asks for the database job, so it is
+          # what every rule below compares against — the input is dev-config's
+          # enum rather than a boolean of this workflow's own.
+          #
           # The rule has two shapes and this is the first: an input that
           # defaults to "" was passed iff it is non-empty.
           #
@@ -176,8 +205,8 @@ jobs:
           # returns non-zero, and the step would die on a rule that correctly
           # did not fire.
           needs_job() {
-            if [ "$DATABASE" != true ] && [ -n "$2" ]; then
-              refuse "$1 needs database: true — $3, and this call leaves that job off"
+            if [ "$DATABASE" != external ] && [ -n "$2" ]; then
+              refuse "$1 needs database: external — $3, and this call leaves that job off"
             fi
             return 0
           }
@@ -190,8 +219,8 @@ jobs:
           # than papers over, and dev-config#66 is two of the three going
           # unrefused there, where the guard has only the first shape.
           changed_from_default() {
-            if [ "$DATABASE" != true ] && [ "$2" != "$3" ]; then
-              refuse "$1 needs database: true — $4, and this call leaves that job off"
+            if [ "$DATABASE" != external ] && [ "$2" != "$3" ]; then
+              refuse "$1 needs database: external — $4, and this call leaves that job off"
             fi
             return 0
           }
@@ -210,12 +239,22 @@ jobs:
             "the route floor is measured across the database job's ramp"
           needs_job datetime-allowlist "$DATETIME_ALLOWLIST" \
             "it waives columns the database job's DATETIME step grades"
+          changed_from_default upgrade-gate "$UPGRADE_GATE" "$UPGRADE_GATE_DEFAULT" \
+            "it adds a step to the database job, which replays the base ref's migrations"
           changed_from_default database-image "$DATABASE_IMAGE" "$DATABASE_IMAGE_DEFAULT" \
             "it is the server the database job starts, and this call starts none"
           changed_from_default start-command "$START_COMMAND" "$START_COMMAND_DEFAULT" \
             "it is how the database job's boot step starts the app"
           changed_from_default health-url "$HEALTH_URL" "$HEALTH_URL_DEFAULT" \
             "it is what the database job's boot step polls and what its ramp measures"
+
+          # The one value of dev-config's enum this workflow does not serve. A
+          # repo whose database is Postgres wants their check.yml rather than
+          # this one, and passing it here would hand their Postgres job a repo
+          # that called this workflow for its MySQL-family gates.
+          if [ "$DATABASE" = postgres ]; then
+            refuse "database: postgres is not a value this workflow serves — its database job is MariaDB and MySQL 8. A repo whose database is Postgres calls gokayo43/dev-config's check.yml directly."
+          fi
 
           # Asked whatever the job, because it is a fact about the pair rather
           # than about the job: a bound with no command under it bounds nothing,
@@ -227,7 +266,7 @@ jobs:
           exit "$wrong"
 
   database:
-    if: inputs.database
+    if: inputs.database == 'external'
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
@@ -264,6 +303,15 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          # The upgrade gate replays the base ref's migrations, which are in the
+          # history — and this job cannot fetch them later, because it holds no
+          # credentials and every repo here is private. Unconditional rather
+          # than keyed to the input, which is dev-config's own reasoning for the
+          # same line: an expression that has to produce 0 rides on how GitHub
+          # casts it, and the failure mode of getting that wrong is a gate that
+          # reports nothing rather than one that says so. The static job already
+          # pays for the same history in the same run.
+          fetch-depth: 0
           # Nothing in this job pushes, and it installs and runs the repo's own
           # dependencies in the same workspace the token would sit in.
           persist-credentials: false
@@ -336,6 +384,19 @@ jobs:
           bun: ${{ steps.pinned.outputs.bun }}
           path: ${{ steps.pinned.outputs.path }}
 
+      # After the replay and never before it, and for the same reason the step
+      # below is: this is the half of "do these migrations rebuild the schema"
+      # that a database nobody deployed cannot answer, and it compares what an
+      # upgrade reaches against the schema the replay just built. Its own
+      # database, on the same server, dropped whichever way it goes.
+      - if: inputs['upgrade-gate']
+        uses: gokayo43/dev-config-db/.github/actions/db-upgrade@d1f756aacca92fd99a66ba3370f290c41cb36a22
+        with:
+          database-image: ${{ inputs['database-image'] }}
+          database-url: ${{ steps.pinned.outputs['database-url'] }}
+          bun: ${{ steps.pinned.outputs.bun }}
+          path: ${{ steps.pinned.outputs.path }}
+
       # After the replay and never before it: this gate grades the catalogue the
       # migrations produced, so it needs the schema that step builds rather than
       # one written by hand. Its own pin, because an action and the workflow
@@ -400,6 +461,7 @@ jobs:
           path: |
             ${{ runner.temp }}/replay-from-empty.schema
             ${{ runner.temp }}/replay-again.schema
+            ${{ runner.temp }}/upgraded-from-base.schema
             ${{ runner.temp }}/server.log
             ${{ runner.temp }}/capacity.json
             ${{ runner.temp }}/route-log-before.json

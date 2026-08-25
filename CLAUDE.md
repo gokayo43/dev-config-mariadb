@@ -31,7 +31,9 @@ of their `_lib/gate.ts`), `_lib/foreign.ts` (its narrowing half),
 `_lib/allowlist.ts` (its `-- why` half), the four functions
 `db-replay/database.ts` names (`databaseIn`, `migrate`, `rowsIn`, `textIn`), and what the
 serving gate ports — `db-serving/probe.ts`, `route-coverage.ts`, `capacity.ts`,
-`route-log.ts` and the k6 script `ramp.js`.
+`route-log.ts` and the k6 script `ramp.js` — and the upgrade gate's
+`db-upgrade/base-lineage.ts` and `db-upgrade/repo.ts`, which are theirs entire
+but for a problem being a string here rather than their `Problem`.
 [dev-config#69](https://github.com/gokayo43/dev-config/issues/69) is where
 ending that is argued.
 
@@ -55,7 +57,10 @@ that has been improved says so at the line that improved it.
 ## Layout
 
 - `.github/workflows/check.yml` — the wrapper consumers call. Three jobs: the
-  call into dev-config's `check.yml` with `database: false`, the always-running
+  call into dev-config's `check.yml` with the consumer's own `database` handed
+  on — their enum's `external` is the value for a workflow that runs the
+  database gates in that job's place, so one input decides both and this file
+  answers for nobody — the always-running
   `refusals` job that fails a call asking for a database-job input without the
   job, and `database`, which is every database gate this repo has — one job, and
   CONTEXT.md's entry for the term says why there will stay one. Its server is a
@@ -65,23 +70,27 @@ that has been improved says so at the line that improved it.
   what it costs. Every gate step
   in it is handed the database and the interpreter by a step that reads them at
   the top of that job, before a line of the graded repo's own code has run, and
-  the search path too wherever the step resolves a program by name. `#2`, `#3`
-  and `#5` are shipped; `#4` and `#6` land as further steps of it, each with the
-  composite action that runs it, its own suite, and its page under `docs/gates/`
-  — the shape dev-config's "Adding a gate" describes.
+  the search path too wherever the step resolves a program by name. `#2`, `#3`,
+  `#5` and the upgrade path are shipped; `#4`'s backfill half and `#6` land as
+  further steps of it, each with the composite action that runs it, its own
+  suite, and its page under `docs/gates/` — the shape dev-config's "Adding a
+  gate" describes.
 - `.github/workflows/ci.yml` — this repo's own gate, which is dev-config's
   `check.yml` called directly. It cannot be the wrapper: a commit cannot pin its
   own SHA, so the wrapper's pin is always one commit behind whatever is under
   review.
 - `.github/actions/` — the gates themselves, each a `<name>.ts` the suite drives
-  and a `<name>.main.ts` the action runs. Four directories, all steps of the one
+  and a `<name>.main.ts` the action runs. Five directories, all steps of the one
   database job: `db-server` (the server the rest of them grade), `db-replay`
-  (`#2`), `db-datetime` (`#5`) and `db-serving` (`#3`, the boot, probe and
-  ramp). Each splits what talks to something from
+  (`#2`), `db-upgrade` (the upgrade path, which dev-config leaves to a wrapper
+  passing `database: external`), `db-datetime` (`#5`) and `db-serving` (`#3`,
+  the boot, probe and ramp). Each splits what talks to something from
   what is pure, so that a verdict can be driven without the thing under it —
   `db-replay/database.ts` and `db-replay/schema.ts`, `db-serving/ramp.ts` and
   `db-serving/capacity.ts`; `db-datetime` reads its catalogue through the first
-  of those and opens no connection of its own. `_lib/` is what every action
+  of those and opens no connection of its own, and `db-upgrade` splits the same
+  way — `base-lineage.ts` and `repo.ts` are git and files, `upgrade.ts` is the
+  verdict. `_lib/` is what every action
   shares: `annotations.ts` (the log protocol and the run summary), `foreign.ts`
   (the one place a document nobody here wrote is narrowed), `allowlist.ts` (how
   an allowlist input is read, what a reason costs, and what a dead entry costs)
@@ -105,8 +114,9 @@ that has been improved says so at the line that improved it.
   the commit the workflows call: every input the wrapper hands on reaches the
   call under its own name, every input it declares is read by something and is
   declared with dev-config's own type and default, nothing is forwarded that
-  dev-config does not declare, the call carries exactly one literal and it is
-  `database: false`, only one job calls that workflow at all, what the README
+  dev-config does not declare, the call carries no literal at all — every value
+  in it is a consumer's input handed on — only one job calls that workflow at
+  all, what the README
   tables and what it says is refused cover dev-config's input surface exactly,
   the four carriers of the dev-config pin agree, every action pin names a commit
   this repo carries AND one whose `.github/actions` is the tree here now, every
@@ -122,6 +132,9 @@ that has been improved says so at the line that improved it.
   blocks against a checkout that fights back — a `bunfig.toml` preloading its
   own code, a `DATABASE_URL` naming a database of its own, a `bun` or a `docker`
   of its own first on PATH — both through the one harness in `action-step.ts`.
+  `upgrade.test.ts` drives the upgrade path against a real git history — the
+  fixture in `repo.ts` commits twice, because what that gate grades is the
+  relationship between two commits rather than a tree.
   `server.test.ts` grades the step that replaced the service container, which is
   the one piece of wiring the runner used to guarantee: a server that never
   answers, one that came up and died, and a container a killed run left behind.

@@ -1,6 +1,6 @@
 # The server the database job grades
 
-`database: true` adds the `database` job, and this is its first step: the server
+`database: external` adds the `database` job, and this is its first step: the server
 every gate after it uses, started from the image the consuming repo pinned and
 left running for them. It decides nothing about the repo under grade — what it
 refuses is a call that could not have worked.
@@ -11,7 +11,7 @@ Whichever they pin:
 
 ```yaml
 with:
-  database: true
+  database: external
   database-image: mysql:8.0.42@sha256:… # or a mariadb one, or nothing at all
 ```
 

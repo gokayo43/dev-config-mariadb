@@ -1,9 +1,12 @@
 [install]
 # Supply-chain protection: refuse any version published in the last 7 days, so a
 # compromised release that is detected and yanked within hours never reaches the
-# lockfile. Paired with saveExact for exact, auditable pins.
+# lockfile. Paired with `exact` below for exact, auditable pins.
 minimumReleaseAge = 604800 # 7 days, in seconds
-saveExact = true
+# `exact`, not `saveExact`: the second is npm's spelling and bun reads neither
+# it nor anything by that name, so a repo carrying it has a floating spec and a
+# line saying otherwise. dev-config's repo contract refuses it, with the probe.
+exact = true
 
 [test]
 # The container the database gates' suites drive lives for the whole run, so the

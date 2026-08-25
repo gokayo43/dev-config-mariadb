@@ -123,6 +123,12 @@ const AIMED_AT_THE_JOB = [
     "the route floor is measured across the database job's ramp",
   ],
   [
+    "UPGRADE_GATE",
+    "upgrade-gate",
+    "true",
+    "it adds a step to the database job, which replays the base ref's migrations",
+  ],
+  [
     "DATETIME_ALLOWLIST",
     "datetime-allowlist",
     "shop.opens_at -- the shop's clock",
@@ -150,17 +156,17 @@ const AIMED_AT_THE_JOB = [
 
 for (const [variable, input, value, because] of AIMED_AT_THE_JOB) {
   test(`${input} without the job it drives is refused rather than ignored`, async () => {
-    const refused = await ran({ DATABASE: "false", [variable]: value });
+    const refused = await ran({ DATABASE: "none", [variable]: value });
 
     expect(refused.status).toBe(1);
-    expect(refused.output).toContain(`::error::${input} needs database: true`);
+    expect(refused.output).toContain(`::error::${input} needs database: external`);
     // The name alone is half a rule: what a caller needs is why the input is
     // aimed at a job they left off.
     expect(refused.output).toContain(because);
   });
 
   test(`${input} with the job it drives is what the input is for`, async () => {
-    const allowed = await ran({ DATABASE: "true", [variable]: value });
+    const allowed = await ran({ DATABASE: "external", [variable]: value });
 
     expect(allowed.status).toBe(0);
     expect(allowed.output).not.toContain("::error::");
@@ -181,19 +187,19 @@ test("a call carrying every misplaced input is told about every one of them", as
 
   expect(refused.status).toBe(1);
   for (const [, input] of AIMED_AT_THE_JOB) {
-    expect(refused.output).toContain(`::error::${input} needs database: true`);
+    expect(refused.output).toContain(`::error::${input} needs database: external`);
   }
 });
 
 test("a call that asks for neither passes, which is every consumer that has not adopted", async () => {
-  const quiet = await ran({ DATABASE: "false" });
+  const quiet = await ran({ DATABASE: "none" });
 
   expect(quiet.status).toBe(0);
   expect(quiet.output).not.toContain("::error::");
 });
 
 test("a call that asks for the job and lets every input default passes", async () => {
-  const defaulted = await ran({ DATABASE: "true" });
+  const defaulted = await ran({ DATABASE: "external" });
 
   expect(defaulted.status).toBe(0);
   expect(defaulted.output).not.toContain("::error::");
@@ -218,14 +224,16 @@ test("the defaults the guard compares against are the defaults this workflow dec
   expect(STEP.env["START_COMMAND_DEFAULT"]).toBe(declaredDefault("start-command"));
   expect(STEP.env["HEALTH_URL_DEFAULT"]).toBe(declaredDefault("health-url"));
   expect(STEP.env["DATABASE_IMAGE_DEFAULT"]).toBe(declaredDefault("database-image"));
+  expect(STEP.env["UPGRADE_GATE_DEFAULT"]).toBe(declaredDefault("upgrade-gate"));
 });
 
 test("passing those exactly as they are declared is the one caller this cannot see", async () => {
   const invisible = await ran({
-    DATABASE: "false",
+    DATABASE: "none",
     START_COMMAND: declaredDefault("start-command"),
     HEALTH_URL: declaredDefault("health-url"),
     DATABASE_IMAGE: declaredDefault("database-image"),
+    UPGRADE_GATE: declaredDefault("upgrade-gate"),
   });
 
   // Not a wish: a workflow_call input cannot be asked whether the caller passed
@@ -236,7 +244,7 @@ test("passing those exactly as they are declared is the one caller this cannot s
 });
 
 test("a bound with no probe under it is refused whether or not the job runs", async () => {
-  for (const database of ["true", "false"]) {
+  for (const database of ["external", "none"]) {
     const refused = await ran({ DATABASE: database, PROBE_TIMEOUT: "30" });
 
     expect(refused.status).toBe(1);
@@ -246,7 +254,7 @@ test("a bound with no probe under it is refused whether or not the job runs", as
 
 test("a bound with a probe under it is the pair the two inputs are for", async () => {
   const allowed = await ran({
-    DATABASE: "true",
+    DATABASE: "external",
     PROBE_COMMAND: "bun run probe",
     PROBE_TIMEOUT: "30",
   });

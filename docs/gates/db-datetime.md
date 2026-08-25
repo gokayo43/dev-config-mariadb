@@ -1,6 +1,6 @@
 # The DATETIME gate
 
-`database: true` adds this to the `database` job, as the step after the
+`database: external` adds this to the `database` job, as the step after the
 migrations: the database that replay just built is asked which of its columns
 are `DATETIME`, and every one of them has to carry a reasoned entry in
 `datetime-allowlist` or the step goes red naming it.
@@ -40,7 +40,7 @@ columns where the wall-clock reading is the point.
 
 ```yaml
 with:
-  database: true
+  database: external
   datetime-allowlist: |
     opening_hours.opens_at -- the shop's own clock, 09:00 wherever it is
     contract.expires_on -- a calendar deadline the customer reads in local time
@@ -134,7 +134,7 @@ migration SQL renders as `DATETIME(3)`. Neither number is a ceiling; the
 catalogue is what this gate reads, and a column an ORM never mentioned counts
 too.
 
-So turning `database: true` on for the first time will not produce a short list.
+So asking for the database job for the first time will not produce a short list.
 Every column is then a real decision — convert it to `TIMESTAMP`, or write down
 why its digits really are a wall-clock reading — and that decision is the whole
 point of the gate rather than an obstacle in front of it. Two things are worth

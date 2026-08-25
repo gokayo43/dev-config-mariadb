@@ -43,6 +43,18 @@ const CASES = {
     DATABASE_URL: "mysql://root:db-gate@127.0.0.1:13306/app",
   }),
 
+  // A project that is no git repository at all, which the gate refuses while
+  // establishing whether the checkout has history — enough to prove the process
+  // ends without a server or a history to reach for.
+  "db-upgrade/upgrade.main.ts": async () => ({
+    INPUT_PROJECT: await materialise({}),
+    INPUT_DATABASE_IMAGE: "mariadb:11.4",
+    INPUT_UPGRADED: join(await materialise({}), "upgraded.schema"),
+    INPUT_BASE_REF: "",
+    INPUT_BEFORE: "",
+    DATABASE_URL: "mysql://root:db-gate@127.0.0.1:13306/app",
+  }),
+
   "db-datetime/datetime.main.ts": async () => ({
     // A database nothing is listening on: the gate opens a connection, fails to,
     // and says so through `entry`. What this case is about is that it comes

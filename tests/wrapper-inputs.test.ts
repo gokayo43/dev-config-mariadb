@@ -330,18 +330,24 @@ test("README.md's account of the input surface is dev-config's own", async () =>
   ).toEqual(Object.keys(inputsOf(upstream)).toSorted(alphabetically));
 });
 
-test("the call turns dev-config's database job off with a literal, whatever the caller asked for", () => {
-  // Everything else in the call is a caller's input handed on; a second literal
-  // would be this workflow answering for a consumer in a value nothing here
+test("nothing in the call is this workflow answering for its consumer", () => {
+  // A literal here would be this workflow deciding a value nothing in it
   // declares, and dev-config cannot tell that from the consumer's own answer.
   //
-  // This is also the whole of what keeps the wrapper's own `database` input off
-  // dev-config's Postgres job: the value beside that name is `false` and not an
-  // expression, and the check above refuses this repo's input reaching any
-  // other name of theirs.
+  // There used to be exactly one, and what happened to it is worth keeping: while
+  // their `database` was a boolean meaning "run our Postgres job", this workflow
+  // answered it `false` and kept an input of the same name meaning "run mine" —
+  // one spelling, two questions, and a literal to hold them apart. Their enum has
+  // `external` for a workflow that runs the database gates in that job's place,
+  // so the two questions became one input and the literal went with them.
   expect(
     Object.entries(call(wrapper, "check.yml").with).filter(([, value]) => !forwards(value)),
-  ).toEqual([["database", false]]);
+  ).toEqual([]);
+
+  // And the value that decides both jobs really is handed on rather than
+  // dropped: a call that stopped naming it would leave dev-config on its own
+  // default while the job here still ran off the consumer's answer.
+  expect(forwarded(wrapper, "check.yml").map(([key]) => key)).toContain("database");
 });
 
 test("this repo is gated by, and installs, the dev-config it hands its consumers", async () => {

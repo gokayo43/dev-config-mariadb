@@ -61,6 +61,26 @@ interface Volatile {
  */
 const VOLATILE: readonly Volatile[] = [
   {
+    records: "the dump header's name for the database it was taken from",
+    // The database's name is where the schema was read rather than anything it
+    // can hold. The replay gate never met this — both of its dumps come from one
+    // database — and the upgrade gate cannot avoid it: a database built fresh
+    // and one built by upgrading are two databases by construction, so without
+    // these two rules every run of that gate parts at the header and reports the
+    // two names as the difference.
+    //
+    // Swept the way the rest of this list was, on both pins: one schema dumped
+    // from two differently named databases differs in exactly three lines, and
+    // these two rules are those three.
+    of: /^(-- Host: .*  +Database: ).*$/u,
+    to: "$1<database>",
+  },
+  {
+    records: "the section headings naming that database, before the routines and the events",
+    of: /^(-- Dumping (?:events|routines) for database ').*(')$/u,
+    to: "$1<database>$2",
+  },
+  {
     records: "a table's AUTO_INCREMENT counter — the id it would hand out next",
     // Anchored to the option list closing the CREATE TABLE. A column's own
     // AUTO_INCREMENT carries no `=`, and a default value that spelled one is

@@ -47,9 +47,15 @@ jobs:
     uses: gokayo43/dev-config-db/.github/workflows/check.yml@<commit sha> # <release tag>
     with:
       build: true
-      database: true
+      database: external
       contract-exemptions: ci-call
 ```
+
+`external` is dev-config's own value for this arrangement: their database job is
+Postgres, and it says a workflow wrapping theirs runs the database gates in that
+job's place. It is handed straight on, so one input decides both — and
+`database: postgres` is refused here rather than served, since a repo whose
+database is Postgres calls dev-config directly.
 
 A repo whose server is MySQL 8 adds one line, pinned by digest the way it pins
 everything else:
@@ -84,10 +90,12 @@ is the other half of the same issue.
 | `mutation-floor`      | `string`  |
 | `contract-exemptions` | `string`  |
 | `stack-allowlist`     | `string`  |
+| `data-jobs-external`  | `string`  |
 | `test-network`        | `string`  |
 | `test-suite-evidence` | `string`  |
-| `database`            | `boolean` |
+| `database`            | `string`  |
 | `database-image`      | `string`  |
+| `upgrade-gate`        | `boolean` |
 | `db-gate-evidence`    | `string`  |
 | `start-command`       | `string`  |
 | `health-url`          | `string`  |
@@ -98,7 +106,7 @@ is the other half of the same issue.
 | `route-allowlist`     | `string`  |
 | `datetime-allowlist`  | `string`  |
 
-The first nine are handed to dev-config's `check.yml` unchanged, so
+The first ten are handed to dev-config's `check.yml` unchanged, so
 [its README](https://github.com/gokayo43/dev-config#ci) is the reference for
 what one does and for the conditions under which it refuses one. The inputs
 here carry no description of their own for that reason — a second copy of that
@@ -106,10 +114,12 @@ prose is a copy that drifts — and the one exception says what dev-config
 cannot: that a consumer of this workflow owes `ci-call`.
 
 The other eleven are this workflow's own and reach dev-config's `check.yml`
-under no name at all. Nine are spelled the way dev-config spells the same nine,
-and mean here what they mean there against another server: `database` adds the
-database job below, `db-gate-evidence` names the artifact it leaves behind, and
-the seven after them aim its boot, probe and ramp steps —
+under no name at all — `database` is the exception among them, since it decides
+a job here AND is handed on. Nine are spelled the way dev-config spells the same
+nine, and mean here what they mean there against another server: `database` adds
+the database job below, `upgrade-gate` adds its upgrade step, `db-gate-evidence`
+names the artifact it leaves behind, and the six after them aim its boot, probe
+and ramp steps —
 [docs/gates/db-serving.md](docs/gates/db-serving.md) is what each one does. A
 consumer that moves between the two workflows writes one call either way.
 
@@ -127,10 +137,15 @@ and fails on a type or default of this wrapper's own, on an input declared that
 nothing reads, and on a name this page has stopped accounting for.
 
 Every other input dev-config's `check.yml` declares is refused here rather than
-forwarded: `upgrade-gate`, `semantic-fixtures`, `timestamp-allowlist`,
-`backfill-seed` and `backfill-command`. Each is aimed at a step of the Postgres
-database job this workflow leaves off, and the jobs below are what will answer
-them for MariaDB.
+forwarded: `semantic-fixtures`, `timestamp-allowlist`, `backfill-seed` and
+`backfill-command`. Each is aimed at a step of the Postgres database job this
+workflow leaves off, and the jobs below are what will answer them for this
+family.
+
+`upgrade-gate` was on that list until dev-config stopped demanding its own
+upgrade gate of a caller passing `database: external`: the duty came here with
+the value, and [docs/gates/db-upgrade.md](docs/gates/db-upgrade.md) is this
+workflow's answer to it for both products.
 
 Passing any input aimed at this repo's own database job without asking for that
 job is refused rather than ignored, which is what the `refusals` job is for.
