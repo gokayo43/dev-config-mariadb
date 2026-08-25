@@ -296,10 +296,10 @@ jobs:
             echo "path=$PATH"
           } >> "$GITHUB_OUTPUT"
 
-      # Before the graded repo's own install scripts, because it is what every
-      # step after it connects to and because the two products differ about how
-      # a client authenticates: one step owns that, and it is this one. By full
-      # path and SHA rather than `./` for the reason the steps below carry.
+      # First of the job's own steps, where the service container it replaces
+      # would have been: the server is a fact about this job rather than about
+      # any one gate, and every step below connects to it. By full path and SHA
+      # rather than `./` for the reason the steps below carry.
       - uses: gokayo43/dev-config-db/.github/actions/db-server@51b9743a4d681142c0ab9d7014e34390b07c624a
         with:
           database-image: ${{ inputs['database-image'] }}
