@@ -113,13 +113,13 @@ here carry no description of their own for that reason — a second copy of that
 prose is a copy that drifts — and the one exception says what dev-config
 cannot: that a consumer of this workflow owes `ci-call`.
 
-The other eleven are this workflow's own and reach dev-config's `check.yml`
-under no name at all — `database` is the exception among them, since it decides
-a job here AND is handed on. Nine are spelled the way dev-config spells the same
-nine, and mean here what they mean there against another server: `database` adds
-the database job below, `upgrade-gate` adds its upgrade step, `db-gate-evidence`
-names the artifact it leaves behind, and the six after them aim its boot, probe
-and ramp steps —
+The other twelve drive this workflow's own job and reach dev-config's
+`check.yml` under no name at all — `database` is the exception among them, since
+it decides a job here AND is handed on. Ten are spelled the way dev-config
+spells the same ten, and mean here what they mean there against another server:
+`database` adds the database job below, `upgrade-gate` adds its upgrade step,
+`db-gate-evidence` names the artifact it leaves behind, and the seven after them
+aim its boot, probe and ramp steps —
 [docs/gates/db-serving.md](docs/gates/db-serving.md) is what each one does. A
 consumer that moves between the two workflows writes one call either way.
 
