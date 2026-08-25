@@ -10,10 +10,13 @@ import { startServer } from "./server.ts";
 const CONTAINER = "db-gate-server";
 
 /**
- * How long the server has to come up, and it is a bound rather than a guess:
- * the images this repo certifies initialise a fresh data directory in under
- * thirty seconds on a cold runner, and the job that calls this allows itself
- * fifteen minutes for everything after it.
+ * How long the server has to come up, and it is a bound rather than a guess.
+ * Measured on the pins this repo certifies, image already local: 10s for
+ * MariaDB 11.4 and 25s for MySQL 8.0 from `docker run` to the first query
+ * answered. A runner pays an image pull on top of that, and the job that calls
+ * this allows itself fifteen minutes for everything after it — so two minutes
+ * is room for a cold pull and a slow box without being a bound that lets a
+ * wedged server eat the job.
  */
 const WITHIN = 120_000;
 

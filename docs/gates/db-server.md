@@ -40,8 +40,10 @@ as a service.
 What that costs, stated plainly: the runner health-checks a service container
 and refuses to start the job's steps until it passes, and it starts one in
 parallel with the job's checkout. A step does neither. So this step polls the
-server itself and blocks until it answers — which is the same wait, spent in
-series rather than in parallel, and about twenty seconds of the job's fifteen
+server itself and blocks until it answers — the same wait, spent in series
+rather than in parallel. Measured from `docker run` to the first query answered,
+image already local: 10s on the MariaDB pin, 25s on the MySQL 8 one, plus
+whatever the image pull costs a cold runner. The step's own bound is two
 minutes.
 
 What it buys back is that the wait is this repo's code rather than a health
