@@ -9,9 +9,11 @@ import { startServer } from "./server.ts";
  * It would not on a self-hosted one: the name is reclaimed with `docker rm
  * --force` before it is created, so two jobs running at once against one docker
  * daemon under one constant name would each kill the other's server mid-gate.
- * A runner agent runs one job at a time and each has its own `_work` root, so
- * the workspace is the key that separates them — while staying the same across
- * re-runs, which is what the reclaim needs to keep working.
+ * Two runners on one machine are required to have their own `_work` roots — one
+ * cannot share another's — so the workspace is a key that separates them, while
+ * staying the same across re-runs of one job, which is what the reclaim needs.
+ * Two jobs that did share a workspace would still collide, which is the state
+ * this replaces rather than a hole it opens.
  *
  * From `github.workspace` through the action rather than from the environment:
  * an expression context is not something a step of the graded repo can write,
