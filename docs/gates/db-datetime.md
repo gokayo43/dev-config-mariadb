@@ -61,9 +61,9 @@ exactly one column and a third part would name nothing.
 Fixing the database is not tidiness either. A Postgres connection can see one
 database; a MySQL-family connection can see every database on the server, and on
 a stock server of either pinned image `information_schema`, `mysql` and `sys`
-carry dozens of `DATETIME` columns between them (probed: 36 on the MariaDB pin). Unfiltered, this gate would open
-with three dozen refusals for columns no consumer's migrations wrote and no
-consumer can convert.
+carry dozens of `DATETIME` columns between them (probed: 36 on the MariaDB pin).
+Unfiltered, this gate would open with three dozen refusals for columns no
+consumer's migrations wrote and no consumer can convert.
 
 Entries are one per line rather than space-separated because an identifier can
 hold a space: `` `opening hours` `` and `` `opens at` `` are legal names, and

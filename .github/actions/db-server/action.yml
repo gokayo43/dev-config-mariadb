@@ -22,6 +22,14 @@ inputs:
       initialises with, and the database it creates are read from it, so no two
       steps can disagree about which server was started.
     required: true
+  workspace:
+    description: >-
+      The workspace this job was given, which is what the container is named
+      after: on a self-hosted runner two jobs share a docker daemon, and this
+      step reclaims its name before it creates. Passed by the action from
+      `github.workspace` rather than read out of the environment, since a step
+      of the graded repo can write the variable and not the expression context.
+    required: true
   bun:
     description: >-
       The absolute path to the interpreter this step runs under, from the same
@@ -47,6 +55,7 @@ runs:
       working-directory: ${{ github.action_path }}
       env:
         INPUT_DATABASE_IMAGE: ${{ inputs['database-image'] }}
+        INPUT_WORKSPACE: ${{ inputs.workspace }}
         INPUT_BUN: ${{ inputs.bun }}
         PATH: ${{ inputs.path }}
         # Declared by this step, which is what makes it this step's: the runner

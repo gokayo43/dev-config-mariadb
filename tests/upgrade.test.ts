@@ -3,7 +3,7 @@ import { join } from "node:path";
 
 import { upgradeGate } from "../.github/actions/db-upgrade/upgrade.ts";
 
-import { lineage, migratesFrom, type Migration } from "./lineage.ts";
+import { lineage, migratesFrom, type Migration, scripted } from "./lineage.ts";
 import { PRODUCTS, emptyDatabase, query } from "./servers.ts";
 import { committed, type Repo } from "./repo.ts";
 import { type Tree } from "./tree.ts";
@@ -170,6 +170,56 @@ for (const product of PRODUCTS) {
         files ?? "",
       );
       expect(await Bun.file(join(repo.root, "drizzle/0001_slug.sql")).exists()).toBe(true);
+    }, 120_000);
+
+    /**
+     * The check that reads the journal back, and the reason it exists: the base
+     * phase runs THIS branch's `db:migrate` over the base ref's files, because
+     * it is the only migrator there is. A lineage the base ref carried that the
+     * branch's script no longer names is then missing from both halves of the
+     * comparison and compares equal — while every database deployed from that
+     * commit keeps everything the lineage built.
+     *
+     * The most plausible wrong implementation is to read the journal and do
+     * nothing with it, which is what this repo shipped until this case existed:
+     * the whole gate stays green here, and says a branch that stopped migrating
+     * `extra` converges.
+     */
+    test("a lineage the base ref carried that this branch no longer migrates is refused", async () => {
+      const both = {
+        ...scripted(`bun run ${JOURNALLED} ./drizzle && bun run ${JOURNALLED} ./extra`),
+        ...lineage("drizzle", CREATES_THING),
+        ...lineage("extra", {
+          tag: "0000_other",
+          when: 1_500,
+          sql: "CREATE TABLE `other` (`id` int);\n",
+        }),
+      };
+      // The branch keeps both lineage directories — a deleted one is refused
+      // earlier, by the lineage read — and stops naming one of them.
+      const repo = await committed(both, { ...both, ...migratesFrom(JOURNALLED, "drizzle") });
+
+      const verdict = await ran(repo);
+
+      expect(verdict.problems).toHaveLength(1);
+      expect(verdict.problems[0]).toContain("carries the migration lineage extra");
+      expect(verdict.problems[0]).toContain("does not run all of it");
+      expect(verdict.note).toBeUndefined();
+    }, 180_000);
+
+    /**
+     * The commit before migrations existed: there is no deployed schema to
+     * upgrade from, so this is a pass with a notice rather than a refusal. The
+     * shape it must not be confused with is a checkout that cannot say, which is
+     * the shallow case below.
+     */
+    test("a base ref carrying no lineage at all passes, saying there is nothing to upgrade from", async () => {
+      const repo = await committed(scripted(`bun run ${JOURNALLED} ./drizzle`), deployed());
+
+      const verdict = await ran(repo);
+
+      expect(verdict.problems).toEqual([]);
+      expect(verdict.note).toContain("carries no migration lineage");
     }, 120_000);
 
     /**

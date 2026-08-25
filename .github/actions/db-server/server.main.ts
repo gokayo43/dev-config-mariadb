@@ -2,12 +2,24 @@ import { entry, inputs, publish, required } from "../_lib/annotations.ts";
 import { startServer } from "./server.ts";
 
 /**
- * One server per job, so its name is a constant rather than something derived:
- * two of these steps in one job would be one server, which is what the name
- * says. It is reclaimed before it is created, which is what a runner that is not
- * thrown away after the job — a self-hosted one — needs from it.
+ * One server per job, and the name says which job by deriving from the
+ * workspace the runner gave it.
+ *
+ * A constant would do on a GitHub-hosted runner, where the machine is the job.
+ * It would not on a self-hosted one: the name is reclaimed with `docker rm
+ * --force` before it is created, so two jobs running at once against one docker
+ * daemon under one constant name would each kill the other's server mid-gate.
+ * A runner agent runs one job at a time and each has its own `_work` root, so
+ * the workspace is the key that separates them — while staying the same across
+ * re-runs, which is what the reclaim needs to keep working.
+ *
+ * From `github.workspace` through the action rather than from the environment:
+ * an expression context is not something a step of the graded repo can write,
+ * and `$GITHUB_WORKSPACE` is.
  */
-const CONTAINER = "db-gate-server";
+function containerFor(workspace: string): string {
+  return `db-gate-server-${new Bun.CryptoHasher("sha256").update(workspace).digest("hex").slice(0, 16)}`;
+}
 
 /**
  * How long the server has to come up, and it is a bound rather than a guess.
@@ -21,7 +33,7 @@ const CONTAINER = "db-gate-server";
 const WITHIN = 120_000;
 
 await entry(async () => {
-  const read = inputs("database-image");
+  const read = inputs("database-image", "workspace");
 
   // The database the calling job declared, mapped into this step by the action
   // from the value that job read before the graded repo ran — action.yml says
@@ -32,6 +44,11 @@ await entry(async () => {
   );
 
   await publish(
-    await startServer({ image: read["database-image"], url, as: CONTAINER, within: WITHIN }),
+    await startServer({
+      image: read["database-image"],
+      url,
+      as: containerFor(read["workspace"]),
+      within: WITHIN,
+    }),
   );
 });

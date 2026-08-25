@@ -352,6 +352,7 @@ jobs:
         with:
           database-image: ${{ inputs['database-image'] }}
           database-url: ${{ steps.pinned.outputs['database-url'] }}
+          workspace: ${{ github.workspace }}
           bun: ${{ steps.pinned.outputs.bun }}
           path: ${{ steps.pinned.outputs.path }}
 

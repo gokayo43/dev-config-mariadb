@@ -264,6 +264,39 @@ test("a bound with a probe under it is the pair the two inputs are for", async (
 });
 
 /**
+ * The one value of dev-config's enum this workflow does not serve, and the only
+ * place that rule is stated: handing their `database` on is what makes their
+ * vocabulary this workflow's, and `postgres` is where that stops being true — it
+ * would hand their Postgres job a repo that called this workflow for its
+ * MySQL-family gates, with this repo's own database job left off.
+ *
+ * The most plausible wrong implementation is the guard simply not being there:
+ * every other case in this file stays green, since none of them passes a value
+ * this workflow does not serve.
+ */
+test("database: postgres is refused rather than forwarded to a job this workflow leaves off", async () => {
+  const refused = await ran({ DATABASE: "postgres" });
+
+  expect(refused.status).toBe(1);
+  expect(refused.output).toContain(
+    "::error::database: postgres is not a value this workflow serves",
+  );
+  // The refusal has somewhere to send the caller, which is the half a bare "no"
+  // would leave them without.
+  expect(refused.output).toContain("calls gokayo43/dev-config's check.yml directly");
+});
+
+/** And the two values it does serve are not refused, or the guard would be one nobody could satisfy. */
+test("the two values this workflow serves pass the guard", async () => {
+  for (const database of ["external", "none"]) {
+    const allowed = await ran({ DATABASE: database });
+
+    expect(`${database}: ${allowed.status}`).toBe(`${database}: 0`);
+    expect(allowed.output).not.toContain("::error::");
+  }
+});
+
+/**
  * The step is written so that its body is the rule and its `if:` is nothing —
  * a condition restating what the body tests is a second statement of one rule,
  * and the half that gets forgotten is the guard. That only holds while the job

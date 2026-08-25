@@ -180,11 +180,12 @@ this exists to catch. What a repo still chooses is _what_ the ramp hits —
 
 **The number is a trend line, not a capacity claim.** GitHub's runners vary by
 machine, by neighbour and by hour, and the app is sharing one with a database
-server, a Redis and whatever else the job started. What it is good for is noticing that a
-change moved the number by an order of magnitude. The number that answers "how
-much load does this hold" is a ramp against the deployed shape, which testing.md
-asks for before a surface takes real users and again after a hot-path change;
-this gate does not replace that and is not evidence for it.
+server, a Redis and whatever else the job started. What it is good for is
+noticing that a change moved the number by an order of magnitude. The number
+that answers "how much load does this hold" is a ramp against the deployed
+shape, which testing.md asks for before a surface takes real users and again
+after a hot-path change; this gate does not replace that and is not evidence for
+it.
 
 There is no latency threshold for the same reason: a latency bound on a shared
 runner fails on a bad neighbour rather than on a bad commit, and a gate that

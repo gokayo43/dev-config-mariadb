@@ -12,10 +12,10 @@ every Bun repo inherits and the `check.yml` every repo calls. Referred to as
 **The wrapper** — `.github/workflows/check.yml` here. What a consuming repo
 calls in place of dev-config's `check.yml`.
 
-**The static gate** — everything dev-config's `check.yml` runs with
-`database: false`. The wrapper hands it on unchanged, which is the whole of what
-"unchanged" means in this repo: the same workflow, at a pinned commit, over the
-consumer's own tree.
+**The static gate** — everything dev-config's `check.yml` runs when its
+database job is not theirs to run. The wrapper hands the consumer's own
+`database` on unchanged, which is the whole of what "unchanged" means in this
+repo: the same workflow, at a pinned commit, over the consumer's own tree.
 
 **A database job** — a job of this repo's own that grades a database the
 consuming repo's migrations built on the server it pinned, and the app that has
@@ -48,13 +48,14 @@ looking at — where the two genuinely differ, the difference is asked of the
 image or of the server itself.
 
 **The schema** — what the image's own dump client renders of a database's
-catalogue with no rows in it: tables, views and sequences, routines, events and triggers. Not the
-rows, and not the three lines that record how many values an object has handed
-out or when it was last created — a table's `AUTO_INCREMENT` counter, a
-sequence's `SETVAL` position, an event's `STARTS` stamp — and not the three
-lines naming the database the dump came from, which is where it was read rather
-than anything it can hold. Those say what has happened to a database, or where
-it was; `docs/gates/db-replay.md` names each one and what it costs to drop it.
+catalogue with no rows in it: tables, views and sequences, routines, events and
+triggers. Not the rows, and not the three lines that record how many values an
+object has handed out or when it was last created — a table's `AUTO_INCREMENT`
+counter, a sequence's `SETVAL` position, an event's `STARTS` stamp — and not the
+three lines naming the database the dump came from, which is where it was read
+rather than anything it can hold. Those say what has happened to a database, or
+where it was; `docs/gates/db-replay.md` names each one and what it costs to drop
+it.
 
 **The journal** — the table a journalled migrator keeps its own record in. For
 drizzle's MySQL migrator it is `__drizzle_migrations`, in the database being

@@ -30,6 +30,7 @@ const CASES = {
   // the process ends.
   "db-server/server.main.ts": async () => ({
     INPUT_DATABASE_IMAGE: "mariadb:11.4",
+    INPUT_WORKSPACE: await materialise({}),
     DATABASE_URL: "mysql://app:db-gate@127.0.0.1:13306/app",
   }),
 

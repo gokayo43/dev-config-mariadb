@@ -29,10 +29,10 @@ page.
 ## What it catches
 
 Every schema built by replaying a history from empty agrees with every other one
-— that is what [the replay gate](db-replay.md) proves. A **deployed** database is
-not built that way. It holds what the base ref's migrations put there, plus the
-journal rows saying so, and the next deploy applies only what that journal does
-not already name.
+— that is what [the replay gate](db-replay.md) proves. A **deployed** database
+is not built that way. It holds what the base ref's migrations put there, plus
+the journal rows saying so, and the next deploy applies only what that journal
+does not already name.
 
 So an edit to a migration that has already run has two different meanings at
 once: on a fresh database it is the new schema, and on every deployed one it is
@@ -117,8 +117,8 @@ app boots against is the fresh one and is never touched by any of this.
   replayed by replacing its directory, which is only a local act when that
   directory holds one lineage and nothing else.
 - **A file the base tree names outside the lineage directory.** A tree entry can
-  be called anything `git mktree` will write, `..` included, and one that escapes
-  the directory would not be put back.
+  be called anything `git mktree` will write, `..` included, and one that
+  escapes the directory would not be put back.
 - **A lineage the base ref carried whose migrations the branch's `db:migrate` no
   longer runs.** Missing from both halves, it would compare equal — while a
   database deployed from the base ref keeps everything it built.
@@ -146,7 +146,8 @@ it is the replay gate's second pass.
 
 - **Rows.** `--no-data` on both dumps. What a migration does to the data in a
   deployed database is not asked here — dev-config's `semantic-fixtures` is that
-  question, and this repo does not carry it yet ([#4](https://github.com/gokayo43/dev-config-db/issues/4)).
+  question, and this repo does not carry it yet
+  ([#4](https://github.com/gokayo43/dev-config-db/issues/4)).
 - **A backfill.** Same issue, same reason.
 - **Anything about a database deployed from further back than the base ref.**
   One hop is what this proves.

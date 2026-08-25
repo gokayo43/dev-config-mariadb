@@ -235,7 +235,15 @@ test("every step that uses the database comes after the step that starts it", ()
 
   const server = using("actions/db-server");
   expect(server).toBeGreaterThan(-1);
-  for (const gate of ["actions/db-replay", "actions/db-datetime", "actions/db-serving"]) {
+  // Every step of this job that opens a connection, and the list is the point:
+  // a gate added without its name here is a gate this rule stopped covering on
+  // the day it shipped, which is how db-upgrade first arrived.
+  for (const gate of [
+    "actions/db-replay",
+    "actions/db-upgrade",
+    "actions/db-datetime",
+    "actions/db-serving",
+  ]) {
     expect(`${gate} runs after the server: ${using(gate) > server}`).toBe(
       `${gate} runs after the server: true`,
     );

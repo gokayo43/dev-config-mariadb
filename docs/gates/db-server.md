@@ -1,9 +1,9 @@
 # The server the database job grades
 
-`database: external` adds the `database` job, and this is its first step: the server
-every gate after it uses, started from the image the consuming repo pinned and
-left running for them. It decides nothing about the repo under grade — what it
-refuses is a call that could not have worked.
+`database: external` adds the `database` job, and this is its first step: the
+server every gate after it uses, started from the image the consuming repo
+pinned and left running for them. It decides nothing about the repo under grade
+— what it refuses is a call that could not have worked.
 
 ## Which server a consumer gets
 
@@ -52,8 +52,13 @@ including the ways it can go wrong.
 
 ## What it does
 
-1. Reclaims the container name, so a run killed outright does not leave one for
-   the next run to collide with.
+1. Reclaims the container name — `db-gate-server-<digest of the job's
+workspace>` — so a run killed outright does not leave one for the next run to
+   collide with. Derived rather than constant because the reclaim is a `docker
+rm --force`: on a self-hosted runner two jobs share one docker daemon, and
+   under one constant name each would kill the other's server mid-gate. A runner
+   agent runs one job at a time and each has its own `_work` root, so the
+   workspace separates concurrent jobs while staying the same across re-runs.
 2. Starts the image, publishing 3306 on the loopback port `database-url` names,
    with the root password and the database name read out of that same URL. The
    environment variables are `MYSQL_ROOT_PASSWORD` and `MYSQL_DATABASE`, which
@@ -84,6 +89,34 @@ the later gates were handed are the ones this container came up with.
   timeout, because the reason is in the image's first lines.
 - **A server that never answers within the bound** — two minutes — with its
   output relayed the same way.
+
+## What a consumer on MySQL 8 has to know about clients
+
+MySQL 8's default authentication plugin is `caching_sha2_password`, and over an
+unencrypted socket it completes only by having the client fetch the server's RSA
+public key. **Bun's own SQL client refuses that** — probed on Bun 1.4.0, both on
+a cold connection and after a successful TLS session, so the server's password
+cache does not rescue it:
+
+```
+MySQLError: The server requested RSA public key retrieval to complete
+authentication, which is not allowed over an insecure connection.
+```
+
+The gates here connect over TLS for that reason, against the container's own
+self-signed certificate, and nothing a consumer writes is involved. But a
+consumer's **own** code runs against the same server in the same job — the
+migrator this gate's replay invokes, and the app the serving gate boots — so:
+
+- a migrator or app on `mysql2` is unaffected. Probed: it completes the same
+  handshake over plaintext, which is why `wmstcs` needs nothing here.
+- a migrator or app on **Bun's `SQL`** has to say so, or the database job goes
+  red on a server-side fact rather than on anything about the repo:
+  `new SQL({ url, tls: { rejectUnauthorized: false } })` is what this repo's own
+  gates do, and `tests/replaying-migrator.ts` is a worked example.
+
+A MariaDB consumer meets none of this: `mysql_native_password` never needed
+either half.
 
 ## What it cannot catch
 

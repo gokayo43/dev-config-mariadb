@@ -250,9 +250,10 @@ test("every input the wrapper shares with dev-config is declared exactly as dev-
   // A type or a default of this repo's own is a wrapper that answers for
   // dev-config: a caller who omits the input gets this file's idea of what it
   // means, and the workflow that reads it never sees the difference. It holds
-  // for an input of this repo's own too, and for a stronger reason — the two so
-  // far are `database` and `db-gate-evidence`, which this repo implements for
-  // MariaDB and dev-config implements for Postgres. A consumer switching
+  // for an input of this repo's own too, and for a stronger reason — the four so
+  // far are `database`, `upgrade-gate`, `db-gate-evidence` and `start-command`,
+  // which this repo implements for the MySQL family and dev-config implements
+  // for Postgres. A consumer switching
   // between the two workflows writes one call either way, and a name that meant
   // something different here is the trap that shape is worth avoiding.
   expect(differs).toEqual([]);
