@@ -95,7 +95,7 @@ const AIMED_AT_THE_JOB = [
   [
     "DB_GATE_EVIDENCE",
     "db-gate-evidence",
-    "mariadb-evidence",
+    "db-evidence",
     "names the artifact the database job uploads",
   ],
   [
@@ -123,10 +123,22 @@ const AIMED_AT_THE_JOB = [
     "the route floor is measured across the database job's ramp",
   ],
   [
+    "UPGRADE_GATE",
+    "upgrade-gate",
+    "true",
+    "it adds a step to the database job, which replays the base ref's migrations",
+  ],
+  [
     "DATETIME_ALLOWLIST",
     "datetime-allowlist",
     "shop.opens_at -- the shop's clock",
     "waives columns the database job's DATETIME step grades",
+  ],
+  [
+    "DATABASE_IMAGE",
+    "database-image",
+    "mysql:8.0.46@sha256:7dcddc01f13bab2f15cde676d44d01f61fc9f99fe7785e86196dfc07d358ae2b",
+    "it is the server the database job starts, and this call starts none",
   ],
   [
     "START_COMMAND",
@@ -144,17 +156,17 @@ const AIMED_AT_THE_JOB = [
 
 for (const [variable, input, value, because] of AIMED_AT_THE_JOB) {
   test(`${input} without the job it drives is refused rather than ignored`, async () => {
-    const refused = await ran({ DATABASE: "false", [variable]: value });
+    const refused = await ran({ DATABASE: "none", [variable]: value });
 
     expect(refused.status).toBe(1);
-    expect(refused.output).toContain(`::error::${input} needs database: true`);
+    expect(refused.output).toContain(`::error::${input} needs database: external`);
     // The name alone is half a rule: what a caller needs is why the input is
     // aimed at a job they left off.
     expect(refused.output).toContain(because);
   });
 
   test(`${input} with the job it drives is what the input is for`, async () => {
-    const allowed = await ran({ DATABASE: "true", [variable]: value });
+    const allowed = await ran({ DATABASE: "external", [variable]: value });
 
     expect(allowed.status).toBe(0);
     expect(allowed.output).not.toContain("::error::");
@@ -175,46 +187,53 @@ test("a call carrying every misplaced input is told about every one of them", as
 
   expect(refused.status).toBe(1);
   for (const [, input] of AIMED_AT_THE_JOB) {
-    expect(refused.output).toContain(`::error::${input} needs database: true`);
+    expect(refused.output).toContain(`::error::${input} needs database: external`);
   }
 });
 
 test("a call that asks for neither passes, which is every consumer that has not adopted", async () => {
-  const quiet = await ran({ DATABASE: "false" });
+  const quiet = await ran({ DATABASE: "none" });
 
   expect(quiet.status).toBe(0);
   expect(quiet.output).not.toContain("::error::");
 });
 
 test("a call that asks for the job and lets every input default passes", async () => {
-  const defaulted = await ran({ DATABASE: "true" });
+  const defaulted = await ran({ DATABASE: "external" });
 
   expect(defaulted.status).toBe(0);
   expect(defaulted.output).not.toContain("::error::");
 });
 
 /**
- * The two inputs dev-config's own guard cannot see (dev-config#66). Every other
+ * The three inputs that carry a value rather than an empty default. Every other
  * input aimed at the job defaults to the empty string, so "the caller passed
- * it" is spelled "non-empty"; these two carry a value, because a consumer
- * moving between the two workflows writes one call either way and the defaults
- * are dev-config's. So they are compared with those defaults instead — which
- * leaves exactly one caller invisible, and the page says so rather than
- * implying the hole is closed.
+ * it" is spelled "non-empty"; these three carry a value — two of them because a
+ * consumer moving between the two workflows writes one call either way and the
+ * defaults are dev-config's, and the third because a consumer running the
+ * server this repo certifies should write nothing. So they are compared with
+ * those defaults instead — which leaves exactly one caller invisible, and the
+ * page says so rather than implying the hole is closed. dev-config#66 is the
+ * two of them going unrefused upstream.
  */
 test("the defaults the guard compares against are the defaults this workflow declares", () => {
   // Written twice on purpose — a workflow_call input's default is not readable
   // from a step — so the two statements are held together here instead. A drift
-  // between them refuses every caller or none.
+  // between them refuses every caller or none, and for the image it would refuse
+  // the consumer who wrote nothing at all.
   expect(STEP.env["START_COMMAND_DEFAULT"]).toBe(declaredDefault("start-command"));
   expect(STEP.env["HEALTH_URL_DEFAULT"]).toBe(declaredDefault("health-url"));
+  expect(STEP.env["DATABASE_IMAGE_DEFAULT"]).toBe(declaredDefault("database-image"));
+  expect(STEP.env["UPGRADE_GATE_DEFAULT"]).toBe(declaredDefault("upgrade-gate"));
 });
 
-test("passing those two exactly as they are declared is the one caller this cannot see", async () => {
+test("passing those exactly as they are declared is the one caller this cannot see", async () => {
   const invisible = await ran({
-    DATABASE: "false",
+    DATABASE: "none",
     START_COMMAND: declaredDefault("start-command"),
     HEALTH_URL: declaredDefault("health-url"),
+    DATABASE_IMAGE: declaredDefault("database-image"),
+    UPGRADE_GATE: declaredDefault("upgrade-gate"),
   });
 
   // Not a wish: a workflow_call input cannot be asked whether the caller passed
@@ -225,7 +244,7 @@ test("passing those two exactly as they are declared is the one caller this cann
 });
 
 test("a bound with no probe under it is refused whether or not the job runs", async () => {
-  for (const database of ["true", "false"]) {
+  for (const database of ["external", "none"]) {
     const refused = await ran({ DATABASE: database, PROBE_TIMEOUT: "30" });
 
     expect(refused.status).toBe(1);
@@ -235,13 +254,46 @@ test("a bound with no probe under it is refused whether or not the job runs", as
 
 test("a bound with a probe under it is the pair the two inputs are for", async () => {
   const allowed = await ran({
-    DATABASE: "true",
+    DATABASE: "external",
     PROBE_COMMAND: "bun run probe",
     PROBE_TIMEOUT: "30",
   });
 
   expect(allowed.status).toBe(0);
   expect(allowed.output).not.toContain("::error::");
+});
+
+/**
+ * The one value of dev-config's enum this workflow does not serve, and the only
+ * place that rule is stated: handing their `database` on is what makes their
+ * vocabulary this workflow's, and `postgres` is where that stops being true — it
+ * would hand their Postgres job a repo that called this workflow for its
+ * MySQL-family gates, with this repo's own database job left off.
+ *
+ * The most plausible wrong implementation is the guard simply not being there:
+ * every other case in this file stays green, since none of them passes a value
+ * this workflow does not serve.
+ */
+test("database: postgres is refused rather than forwarded to a job this workflow leaves off", async () => {
+  const refused = await ran({ DATABASE: "postgres" });
+
+  expect(refused.status).toBe(1);
+  expect(refused.output).toContain(
+    "::error::database: postgres is not a value this workflow serves",
+  );
+  // The refusal has somewhere to send the caller, which is the half a bare "no"
+  // would leave them without.
+  expect(refused.output).toContain("calls gokayo43/dev-config's check.yml directly");
+});
+
+/** And the two values it does serve are not refused, or the guard would be one nobody could satisfy. */
+test("the two values this workflow serves pass the guard", async () => {
+  for (const database of ["external", "none"]) {
+    const allowed = await ran({ DATABASE: database });
+
+    expect(`${database}: ${allowed.status}`).toBe(`${database}: 0`);
+    expect(allowed.output).not.toContain("::error::");
+  }
 });
 
 /**

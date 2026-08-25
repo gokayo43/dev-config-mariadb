@@ -4,10 +4,16 @@ import { relay } from "../_lib/annotations.ts";
 import { type Foreign, isForeign, isList, kindOf, textAt } from "../_lib/foreign.ts";
 
 /**
- * Not a gate. What a gate here needs a MariaDB for: what the server says it
- * holds, how the repo's own migrator is run against it, and how a schema is
- * read back as text. Comparing two of them is `schema.ts`, which is pure and
- * kept out of here for that reason.
+ * Not a gate. What a gate here needs a server for: what it says it holds, how
+ * the repo's own migrator is run against it, and how a schema is read back as
+ * text. Comparing two of them is `schema.ts`, which is pure and kept out of
+ * here for that reason.
+ *
+ * Every function below serves both server products, and only three of them had
+ * anything to decide about the difference: the connection, whose TLS is what
+ * MySQL 8's default authentication needs; the catalogue reads, which alias what
+ * they select because the two products answer with the labels in different
+ * case; and the dump, whose client has no name both images use.
  *
  * **Four functions below are checked-in copies of dev-config's
  * `.github/actions/db-gate/database.ts` at the pinned SHA**, not independent
@@ -24,13 +30,13 @@ import { type Foreign, isForeign, isList, kindOf, textAt } from "../_lib/foreign
  * The database a URL names, for the tool that takes one and for the
  * diagnostics.
  *
- * dev-config's, plus `decodeURIComponent`: a MySQL database name may hold
- * characters a URL has to percent-encode, and `mariadb-dump` is handed this as
- * an argument rather than as part of a URL. Postgres names reach their tool
+ * dev-config's, plus `decodeURIComponent`: a MySQL-family database name may
+ * hold characters a URL has to percent-encode, and the dump client is handed
+ * this as an argument rather than as part of a URL. Postgres names reach their tool
  * inside the URL, so upstream never has to undo the encoding.
  *
  * The decode is load-bearing and it is also the sharp edge: whatever it returns
- * becomes an argv entry, and `mariadb-dump` reads options after positionals —
+ * becomes an argv entry, and a dump client reads options after positionals —
  * so a URL whose path spelled `%2D%2Dtab%3D/tmp/x` would arrive as `--tab=…`
  * and write files. Nothing crosses a boundary as shipped, because the URL a
  * gate step is handed is a literal in check.yml, read into a step output before
@@ -86,6 +92,29 @@ export function textIn(row: Foreign, key: string, where: string): string {
 }
 
 /**
+ * A connection to either server product, and the one place anything here
+ * decides how one is opened — this repo's own, not dev-config's.
+ *
+ * The TLS is not about secrecy: the server is a container this job started,
+ * published on its own loopback and thrown away with the runner. It is what
+ * MySQL 8's default authentication plugin needs. `caching_sha2_password`
+ * completes over an unencrypted socket only by having the client fetch the
+ * server's RSA public key, which Bun refuses outright (probed on 1.4.0:
+ * "requested RSA public key retrieval … not allowed over an insecure
+ * connection"), while over TLS it completes with no key exchange at all.
+ * MariaDB's `mysql_native_password` never needed either, so one statement
+ * serves both products.
+ *
+ * Unverified because the certificate is the container's own self-signed one:
+ * both images generate a certificate at first start and there is no authority
+ * anywhere in a job that could vouch for it, so verifying would refuse exactly
+ * the server this job just started.
+ */
+export function connection(url: string): SQL {
+  return new SQL({ url, tls: { rejectUnauthorized: false } });
+}
+
+/**
  * One query, one connection, and the rows it answered — this repo's own, over
  * `rowsIn` above.
  *
@@ -96,13 +125,20 @@ export function textIn(row: Foreign, key: string, where: string): string {
  * all. The connection is closed on both paths, because a gate whose runtime
  * stays alive holding a socket costs the job its whole timeout to say what it
  * already knew.
+ *
+ * Every query that reaches this gives each column it selects an explicit alias,
+ * and that is a requirement rather than a style: MySQL 8 answers a catalogue
+ * read with the labels in upper case (`TABLE_NAME`) and MariaDB with them in
+ * lower case, so a field read by name finds nothing on one of the two servers
+ * unless the query said what to call it. Probed on both pins this repo
+ * certifies; an alias is spelled the same way by both.
  */
 export async function rowsFrom(
   url: string,
   query: string,
   binds: readonly string[],
 ): Promise<readonly Foreign[]> {
-  const db = new SQL(url);
+  const db = connection(url);
   try {
     return rowsIn(await db.unsafe(query, [...binds]), query);
   } finally {
@@ -196,32 +232,84 @@ export async function migrate(root: string, url: string, failed: string): Promis
 }
 
 /**
+ * The two names a MySQL-family image has for its dump client, in the order they
+ * are looked for.
+ *
+ * There is no third and there is no name both use. Probed on the images this
+ * repo certifies: MariaDB 11.4 ships `/usr/bin/mariadb-dump` and no `mysqldump`
+ * symlink at all, and MySQL 8.0 ships `/usr/bin/mysqldump` and no
+ * `mariadb-dump`. So the client is asked of the image rather than derived from
+ * the reference naming it — a consumer's digest may come from any registry
+ * path, and the image is the only thing that knows what it ships.
+ */
+const DUMP_CLIENTS = ["mariadb-dump", "mysqldump"] as const;
+
+/**
+ * The dump client the pinned image ships, as a path in that image, or
+ * `undefined` when it ships neither.
+ *
+ * Asked once and before anything is migrated, because an image with no dump
+ * client is a wiring fault whose diagnostic is worth more than the two replays
+ * it would otherwise be found after.
+ */
+export async function dumpClientIn(image: string): Promise<string | undefined> {
+  // The trailing `exit 0` is what makes the answer readable: `command -v` says
+  // "not found" with a status that is 1 in one shell and 127 in another, so
+  // without it an image shipping neither client and an image that will not run
+  // at all are one outcome. With it the container's status is about the
+  // container, and an empty stdout is the answer.
+  const lookUp = `${DUMP_CLIENTS.map((client) => `command -v ${client}`).join(" || ")} || exit 0`;
+  const proc = Bun.spawn(["docker", "run", "--rm", "--entrypoint", "sh", image, "-c", lookUp], {
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, status] = await Promise.all([
+    new Response(proc.stdout).text(),
+    new Response(proc.stderr).text(),
+    proc.exited,
+  ]);
+  if (status !== 0) {
+    throw new Error(
+      `the dump client could not be read out of ${image} — \`docker run ${image} sh -c '${lookUp}'\` exited ${status}: ${stderr.trim()}`,
+    );
+  }
+  const found = stdout.trim();
+  return found === "" ? undefined : found;
+}
+
+/**
  * The schema as the server's own client writes it.
  *
  * The client comes out of the image the calling job runs the server from, which
  * is what makes them the same build rather than two versions that agree today:
- * `mariadb-dump` renders the catalogue, and a client of another major renders a
- * schema it half understands. Running it from the image is also the only way to
- * have it at all without a second thing to pin — nothing on a GitHub runner
- * ships a MariaDB client, and an apt install would be an unpinned package
- * inside a gate whose whole point is that what it runs is pinned.
+ * the client renders the catalogue, and a client of another product or another
+ * major renders a schema it half understands. Running it from the image is also
+ * the only way to have it at all without a second thing to pin — nothing on a
+ * GitHub runner ships a client for either product, and an apt install would be
+ * an unpinned package inside a gate whose whole point is that what it runs is
+ * pinned.
  *
  * `docker` itself is the one name here still resolved through a search path,
  * which is why action.yml declares that path from the calling job's own reading
  * rather than letting the step inherit it: a digest pins which image runs, and
  * nothing in it pins which program is asked to run that image.
  *
- * `--network host` because the server is a service container of the calling
- * job, published on the runner's loopback: the dump's container has to be in
- * the namespace those ports are in.
+ * `--network host` because the server is a container of the calling job,
+ * published on the runner's loopback: the dump's container has to be in the
+ * namespace those ports are in.
  *
  * The password goes through the environment rather than the argument list.
- * `MYSQL_PWD` is the name the MariaDB client reads — `MARIADB_PWD` is not one —
- * and `--env MYSQL_PWD` with no value hands over the one this process holds, so
- * it never reaches the command line the runner logs or another process on the
- * box can read.
+ * `MYSQL_PWD` is the name both products' clients read — `MARIADB_PWD` is not
+ * one, in either — and `--env MYSQL_PWD` with no value hands over the one this
+ * process holds, so it never reaches the command line the runner logs or
+ * another process on the box can read.
  */
-export async function dumpOf(url: string, image: string, args: readonly string[]): Promise<string> {
+export async function dumpOf(
+  url: string,
+  image: string,
+  client: string,
+  args: readonly string[],
+): Promise<string> {
   const server = new URL(url);
   const database = databaseIn(url);
   const proc = Bun.spawn(
@@ -234,7 +322,7 @@ export async function dumpOf(url: string, image: string, args: readonly string[]
       "--env",
       "MYSQL_PWD",
       image,
-      "mariadb-dump",
+      client,
       `--host=${server.hostname}`,
       `--port=${server.port === "" ? "3306" : server.port}`,
       `--user=${decodeURIComponent(server.username)}`,
@@ -259,7 +347,7 @@ export async function dumpOf(url: string, image: string, args: readonly string[]
   ]);
   if (status !== 0) {
     throw new Error(
-      `mariadb-dump could not read ${database} — \`docker run ${image} mariadb-dump\` exited ${status}: ${stderr.trim()}`,
+      `${client} could not read ${database} — \`docker run ${image} ${client}\` exited ${status}: ${stderr.trim()}`,
     );
   }
   return stdout;

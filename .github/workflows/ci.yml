@@ -19,7 +19,7 @@ jobs:
   # is being reviewed. What the wrapper adds to that call — the pass-through — is
   # graded by tests/wrapper-inputs.test.ts, which the suite lane below runs.
   check:
-    uses: gokayo43/dev-config/.github/workflows/check.yml@602fca2f24341ef9c445b4a6f750e887cf156f37 # v0.50.1
+    uses: gokayo43/dev-config/.github/workflows/check.yml@d1f756aacca92fd99a66ba3370f290c41cb36a22 # v0.51.5
     with:
       # The contract wants the .env.example/.gitignore shape of a repo that has
       # an environment to document. This one has none to document: what it ships
@@ -29,10 +29,11 @@ jobs:
       contract-exemptions: secrets
       # Read in review like the reason on a lint directive, and it is about this
       # suite rather than about the gate: the database gates' cases each drive a
-      # real MariaDB, which the suite starts as a container and reaches on the
-      # runner's loopback. The sealed lane puts the run in a network namespace
-      # with a loopback of its own, which no published port is on.
-      test-network: the database gates' suites drive a MariaDB container on the runner's loopback
+      # real server — one container per product this repo certifies — which the
+      # suite starts and reaches on the runner's loopback. The sealed lane puts
+      # the run in a network namespace with a loopback of its own, which no
+      # published port is on.
+      test-network: the database gates' suites drive server containers on the runner's loopback
 
   # The one thing `bun test` cannot run: the shipped k6 ramp, under the k6 this
   # repo pins. A bun test cannot fetch a binary — the suite's lane has no

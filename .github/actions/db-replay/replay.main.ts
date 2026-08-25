@@ -4,7 +4,7 @@ import { entry, inputs, publish, required } from "../_lib/annotations.ts";
 import { replayGate } from "./replay.ts";
 
 await entry(async () => {
-  const read = inputs("db-image", "from-empty", "replayed", "project");
+  const read = inputs("database-image", "from-empty", "replayed", "project");
 
   // The database the calling job declared, mapped into this step by the action
   // from the value that job read before the graded repo ran — action.yml says
@@ -19,7 +19,7 @@ await entry(async () => {
       // quotes it.
       root: resolve(read["project"]),
       url,
-      image: read["db-image"],
+      image: read["database-image"],
       fromEmpty: read["from-empty"],
       replayed: read["replayed"],
     }),

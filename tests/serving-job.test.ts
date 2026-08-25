@@ -60,6 +60,7 @@ function runnerFiles(document: Foreign): string[] {
 const wrapper = await wrapperDocument();
 const serving = await action("db-serving");
 const replay = await action("db-replay");
+const upgrade = await action("db-upgrade");
 
 /** The steps of the one job that builds a database and runs an app against it. */
 function jobSteps(): Foreign[] {
@@ -84,11 +85,12 @@ test("every file the gates leave in the runner is in the artifact the job upload
   const upload = stepUsing("actions/upload-artifact");
   const path = textAt(mapAt(upload, "with"), "path") ?? "";
 
-  const written = [...runnerFiles(serving), ...runnerFiles(replay)];
-  // The two schemas the replay compared, the app's own output, the k6 summary
-  // and both route-log snapshots: six files, and the whole reason the upload
-  // belongs to the job rather than to either action.
-  expect(written).toHaveLength(6);
+  const written = [...runnerFiles(serving), ...runnerFiles(replay), ...runnerFiles(upgrade)];
+  // The two schemas the replay compared, the schema the upgrade path reached,
+  // the app's own output, the k6 summary and both route-log snapshots: seven
+  // files, and the whole reason the upload belongs to the job rather than to any
+  // one action.
+  expect(written).toHaveLength(7);
   expect(written.filter((file) => !path.includes(file))).toEqual([]);
 
   // The run that failed on the way to a number is exactly the run whose partial
@@ -214,4 +216,36 @@ test("the caller reads the interpreter and the path before the graded repo runs"
   expect(pinned).toBeGreaterThan(-1);
   expect(pinned).toBeLessThan(install);
   expect(install).toBeLessThan(gate);
+});
+
+/**
+ * The server is a step now rather than a service container, which moves one
+ * thing the runner used to guarantee into this file's order: a service was up
+ * before any step ran, and a step is up only before the steps after it.
+ *
+ * So every step of this job that touches the database has to be after the one
+ * that starts it — and the failure this catches is not a hang: the replay gate
+ * would report a refused connection, which reads as a fact about the repo under
+ * grade rather than as a job that was assembled wrong.
+ */
+test("every step that uses the database comes after the step that starts it", () => {
+  const steps = jobSteps();
+  const using = (named: string): number =>
+    steps.findIndex((step) => (textAt(step, "uses") ?? "").includes(named));
+
+  const server = using("actions/db-server");
+  expect(server).toBeGreaterThan(-1);
+  // Every step of this job that opens a connection, and the list is the point:
+  // a gate added without its name here is a gate this rule stopped covering on
+  // the day it shipped, which is how db-upgrade first arrived.
+  for (const gate of [
+    "actions/db-replay",
+    "actions/db-upgrade",
+    "actions/db-datetime",
+    "actions/db-serving",
+  ]) {
+    expect(`${gate} runs after the server: ${using(gate) > server}`).toBe(
+      `${gate} runs after the server: true`,
+    );
+  }
 });

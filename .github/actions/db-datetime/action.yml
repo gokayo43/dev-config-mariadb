@@ -1,8 +1,8 @@
-name: MariaDB DATETIME gate
+name: DATETIME gate
 description: >-
   Asks the database the replay just built which of its columns are DATETIME —
   the type that stores wall-clock digits with no zone — and requires a reasoned
-  allowlist entry for each. The caller declares the service, so it owns the URL
+  allowlist entry for each. The caller declares the server, so it owns the URL
   and hands it in; one value means no two steps can disagree about which
   database was graded. docs/gates/db-datetime.md is what this proves and what it
   cannot catch.
@@ -12,8 +12,8 @@ inputs:
     description: >-
       The columns whose value really is a wall-clock reading rather than an
       instant, as `table.column -- why` entries, one per line — an identifier
-      may itself contain a space. A bare `table.column` because MySQL and
-      MariaDB have no schemas within a database: the schema IS the database, and
+      may itself contain a space. A bare `table.column` because neither server
+      product has schemas within a database: the schema IS the database, and
       this gate reads one. The reason is part of the entry, the price a lint
       directive pays. An entry naming a column the database does not have, or
       one that is not DATETIME, is refused rather than kept.
@@ -37,9 +37,9 @@ inputs:
 # resolves no name at all. Its step runs an absolute interpreter, its own
 # imports spawn nothing, and its run block is shell builtins — so the search
 # path is nobody's to hijack here, and an input the step never read would be
-# dead config a reader would later "fix". The gates that DO resolve a name take
-# it: db-replay for `docker`, db-serving for `setsid`, `bash` and the k6 fetch's
-# `curl`, `sha256sum` and `tar`. `_lib/gate.sh` is where the rule is written.
+# dead config a reader would later "fix". The steps that DO resolve a name take
+# it: db-server and db-replay for `docker`, db-serving for `setsid`, `bash` and
+# the k6 fetch's `curl`, `sha256sum` and `tar`. `_lib/gate.sh` is where the rule is written.
 runs:
   using: composite
   steps:

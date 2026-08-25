@@ -12,7 +12,7 @@ import { EVERY_METHOD, type Route, type RouteLog, type Served } from "./route-lo
  *
  * What lives here is the reading of that payload and the grading of it, ported
  * from dev-config's `db-gate/route-coverage.ts` at the pinned SHA: the rules
- * are theirs, and a floor that graded a MariaDB repo more leniently than a
+ * are theirs, and a floor that graded a MySQL-family repo more leniently than a
  * Postgres one would be this repo breaking the one rule it exists to keep.
  *
  * **A floor, in the sense the coverage threshold is one:** it catches a route

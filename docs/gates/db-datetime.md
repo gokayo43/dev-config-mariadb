@@ -1,16 +1,19 @@
 # The DATETIME gate
 
-`database: true` adds this to the `database` job, as the step after the
+`database: external` adds this to the `database` job, as the step after the
 migrations: the database that replay just built is asked which of its columns
 are `DATETIME`, and every one of them has to carry a reasoned entry in
 `datetime-allowlist` or the step goes red naming it.
 
-MariaDB's two datetime types are not two spellings of one thing, and they are
-the other way round from what a Postgres reader expects.
+The family's two datetime types are not two spellings of one thing, and they are
+the other way round from what a Postgres reader expects. Both server products
+this repo serves behave identically here, so this is one gate rather than one
+per product.
 
 `TIMESTAMP` is the safe one. The server converts a value to UTC on the way in
 and back to the session's zone on the way out, so the instant survives the trip.
-Probed on the pinned image, `11.4.12-MariaDB`:
+Probed on both pinned images, `11.4.12-MariaDB` and `8.0.46`, with the same
+answer from each:
 
 ```
 set time_zone = '+00:00'; insert into zones values ('2024-06-01 12:00:00', '2024-06-01 12:00:00');
@@ -37,7 +40,7 @@ columns where the wall-clock reading is the point.
 
 ```yaml
 with:
-  database: true
+  database: external
   datetime-allowlist: |
     opening_hours.opens_at -- the shop's own clock, 09:00 wherever it is
     contract.expires_on -- a calendar deadline the customer reads in local time
@@ -46,21 +49,21 @@ with:
 **The name is `datetime-allowlist`, not dev-config's `timestamp-allowlist`.**
 Each names the ambiguous type of its own server, and here that spelling would
 name the safe one — so the wrapper refuses `timestamp-allowlist` rather than let
-a MariaDB reader meet the rule backwards.
+a reader of either product meet the rule backwards.
 
 **A bare `table.column`, and that is the other deliberate difference.** Their
 `timestamp-allowlist` keys `schema.table.column`, because a Postgres database
 holds schemas and `app.events.occurred_at` and `public.events.occurred_at` are
-two different columns. MySQL and MariaDB have no such layer — the schema **is**
+two different columns. Neither product here has such a layer — the schema **is**
 the database — so once this gate has fixed the database, `table.column` names
 exactly one column and a third part would name nothing.
 
 Fixing the database is not tidiness either. A Postgres connection can see one
 database; a MySQL-family connection can see every database on the server, and on
-a stock server of the pinned image `information_schema`, `mysql` and `sys` carry
-36 `DATETIME` columns between them (probed). Unfiltered, this gate would open
-with three dozen refusals for columns no consumer's migrations wrote and no
-consumer can convert.
+a stock server of either pinned image `information_schema`, `mysql` and `sys`
+carry dozens of `DATETIME` columns between them (probed: 36 on the MariaDB pin).
+Unfiltered, this gate would open with three dozen refusals for columns no
+consumer's migrations wrote and no consumer can convert.
 
 Entries are one per line rather than space-separated because an identifier can
 hold a space: `` `opening hours` `` and `` `opens at` `` are legal names, and
@@ -105,7 +108,7 @@ by omission.
 | `TIMESTAMP`, `TIMESTAMP(n)` | no     | the fix, not the fault: UTC on the way in, the reader's zone on the way out                                                                              |
 | `DATE`, `TIME`, `YEAR`      | no     | never claimed to be instants. A birthdate is a date, and grading these would ask every consumer to justify every one it stores                           |
 
-There is no array type in MariaDB, so there is no analogue of the second member
+Neither product has an array type, so there is no analogue of the second member
 dev-config's gate carries (`_timestamp`, a Postgres array of wall-clock
 timestamps).
 
@@ -131,7 +134,7 @@ migration SQL renders as `DATETIME(3)`. Neither number is a ceiling; the
 catalogue is what this gate reads, and a column an ORM never mentioned counts
 too.
 
-So turning `database: true` on for the first time will not produce a short list.
+So asking for the database job for the first time will not produce a short list.
 Every column is then a real decision — convert it to `TIMESTAMP`, or write down
 why its digits really are a wall-clock reading — and that decision is the whole
 point of the gate rather than an obstacle in front of it. Two things are worth
@@ -183,3 +186,17 @@ gets trusted for things it never checked.
   consumer's production server is a different build with a different
   configuration, and its `sql_mode` decides what a conversion does to the rows
   this gate never sees.
+
+## The one thing this gate had to learn to serve two products
+
+The catalogue read is aliased — `select table_name as table_name, …` — and that
+is not style. MySQL 8 answers a query against `information_schema` with the
+column labels in **upper case**; MariaDB answers with them in lower case. A gate
+that read the fields by the name one product uses finds none of them on the
+other and dies on the first row, which is a step that fails red without ever
+having graded a column. An alias is spelled the way it was written by both, so
+the gate reads one shape.
+
+Nothing else here is per-product: the types, the `data_type` spelling, the
+case-folding rules on either side of the dot and the per-database filter are the
+same on both, and this repo's suite runs every case in this page against each.

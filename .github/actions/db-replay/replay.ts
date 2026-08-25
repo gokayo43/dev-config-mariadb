@@ -1,6 +1,14 @@
 import type { Verdict } from "../_lib/annotations.ts";
 import { mapAt, textAt } from "../_lib/foreign.ts";
-import { databaseIn, dumpOf, JOURNAL, migrate, objectsIn, SCRIPT } from "./database.ts";
+import {
+  databaseIn,
+  dumpClientIn,
+  dumpOf,
+  JOURNAL,
+  migrate,
+  objectsIn,
+  SCRIPT,
+} from "./database.ts";
 import { compare, type Dump, DUMP, schemaFrom } from "./schema.ts";
 
 /**
@@ -29,8 +37,8 @@ import { compare, type Dump, DUMP, schemaFrom } from "./schema.ts";
  */
 
 /** The schema as the server's own client renders it, with what is not schema taken out. */
-async function schemaOf(url: string, image: string, of: string): Promise<Dump> {
-  return schemaFrom(of, await dumpOf(url, image, DUMP));
+async function schemaOf(url: string, image: string, client: string, of: string): Promise<Dump> {
+  return schemaFrom(of, await dumpOf(url, image, client, DUMP));
 }
 
 /** Where the gate replays, what it replays with, and where the evidence goes. */
@@ -74,14 +82,14 @@ export async function replayGate({
 
   // A composite action maps a missing input to the empty string, so `required:
   // true` in action.yml is a promise nothing enforces at runtime. Without this
-  // the gate replays the history twice and then dies on `docker run ""
-  // mariadb-dump`, having spent the job's budget to report a wiring fault the
-  // first line could have named. check.yml always passes it; a caller running
-  // the action directly is who this is for.
+  // the gate replays the history twice and then dies on `docker run ""`, having
+  // spent the job's budget to report a wiring fault the first line could have
+  // named. check.yml always passes it; a caller running the action directly is
+  // who this is for.
   if (image.trim() === "") {
     return {
       problems: [
-        "the db-image input is empty, and it names the image this gate takes its dump client from — the calling job has to pass the same image it runs the MariaDB service from, pinned by digest.",
+        "the database-image input is empty, and it names the image this gate takes its dump client from — the calling job has to pass the same image it started the server from, pinned by digest.",
       ],
     };
   }
@@ -94,6 +102,20 @@ export async function replayGate({
     return {
       problems: [
         `${root}/package.json declares no ${SCRIPT} script, and this gate has nothing to replay — a migration history it was never shown is one it cannot say anything about. Declare the script, or drop database: true from the call.`,
+      ],
+    };
+  }
+
+  // Which client renders the schema is the image's answer rather than this
+  // gate's: the two products name their dump client differently and no image
+  // ships both. Asked here, where the answer costs one container and the run
+  // has not started, rather than after two replays — and asked once, because
+  // both dumps below are the same image's.
+  const client = await dumpClientIn(image);
+  if (client === undefined) {
+    return {
+      problems: [
+        `${image} ships neither of the dump clients a MySQL-family server image has, so there is nothing here to render ${database}'s schema with. Pin an image that carries the server's own client — this gate takes the dump from the same build the server runs.`,
       ],
     };
   }
@@ -134,7 +156,7 @@ export async function replayGate({
   // that may never happen: the dump a run never got to compare is exactly the
   // evidence somebody wants, and reproducing it by re-running with more
   // printing is the shape of debugging every diagnostic here exists to avoid.
-  const fresh = await schemaOf(url, image, "the schema built from empty");
+  const fresh = await schemaOf(url, image, client, "the schema built from empty");
   await Bun.write(fromEmpty, `${fresh.units.join("\n")}\n`);
 
   await migrate(
@@ -142,7 +164,7 @@ export async function replayGate({
     url,
     `bun run ${SCRIPT} failed on its second run over ${database}, having just succeeded on its first — the migrator's own output above names the statement. It met a database that already carries its effects, so either the runner is re-executing what it has applied or that statement cannot be applied twice.`,
   );
-  const again = await schemaOf(url, image, "the schema after a second replay");
+  const again = await schemaOf(url, image, client, "the schema after a second replay");
   await Bun.write(replayed, `${again.units.join("\n")}\n`);
 
   const changed = compare(fresh, again);

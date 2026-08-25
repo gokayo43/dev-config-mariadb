@@ -8,7 +8,7 @@
  *
  * Pure, and in its own module for that reason: nothing below opens a socket or
  * spawns a process, so it is gradable without a server and reusable without
- * dragging one in. `database.ts` is the half that talks to MariaDB.
+ * dragging one in. `database.ts` is the half that talks to a server.
  *
  * The comparison is **not** a copy of dev-config's. Theirs is a multiset: the
  * lines one side holds that the other does not, with blank lines filtered out
@@ -20,7 +20,7 @@
 /**
  * What the dump is asked for: no rows, and everything the catalogue holds that
  * a migration can build. Routines, events and triggers are not all in
- * `mariadb-dump`'s defaults, and a schema that left them out would call a
+ * either product's dump defaults, and a schema that left them out would call a
  * repo's stored procedures unchanged whatever had happened to them.
  *
  * `--skip-dump-date` rather than a rule below: the timestamp is the only thing
@@ -38,7 +38,7 @@ interface Volatile {
 }
 
 /**
- * The lines a MariaDB schema dump carries that move without the schema moving.
+ * The lines a schema dump carries that move without the schema moving.
  *
  * One class, not a list of surprises: **how many values an object has handed
  * out, and when an object was last created**. Neither is a fact about what the
@@ -52,8 +52,34 @@ interface Volatile {
  * before each `CREATE` — moved exactly these three lines and no others. Every
  * `DEFINER`, every `sql_mode` block, the sequence's own definition and the
  * whole compatibility preamble came out byte-identical.
+ *
+ * The sweep was then run again, unchanged, against the MySQL 8 pin: the same
+ * two lines moved — the counter and the event's stamp — and nothing a MySQL
+ * dump carries and a MariaDB one does not. So this list is one list rather than
+ * one per product, and the third member is simply inert where the product has
+ * no sequences.
  */
 const VOLATILE: readonly Volatile[] = [
+  {
+    records: "the dump header's name for the database it was taken from",
+    // The database's name is where the schema was read rather than anything it
+    // can hold. The replay gate never met this — both of its dumps come from one
+    // database — and the upgrade gate cannot avoid it: a database built fresh
+    // and one built by upgrading are two databases by construction, so without
+    // these two rules every run of that gate parts at the header and reports the
+    // two names as the difference.
+    //
+    // Swept the way the rest of this list was, on both pins: one schema dumped
+    // from two differently named databases differs in exactly three lines, and
+    // these two rules are those three.
+    of: /^(-- Host: .*  +Database: ).*$/u,
+    to: "$1<database>",
+  },
+  {
+    records: "the section headings naming that database, before the routines and the events",
+    of: /^(-- Dumping (?:events|routines) for database ').*(')$/u,
+    to: "$1<database>$2",
+  },
   {
     records: "a table's AUTO_INCREMENT counter — the id it would hand out next",
     // Anchored to the option list closing the CREATE TABLE. A column's own
@@ -63,7 +89,8 @@ const VOLATILE: readonly Volatile[] = [
     to: "$1",
   },
   {
-    records: "a sequence's position — the value it would hand out next",
+    records:
+      "a sequence's position — the value it would hand out next (MariaDB only, which is the product that has sequences)",
     // `DO SETVAL(`s`, 1, 0);` becomes `DO SETVAL(`s`, 1001, 0);` the moment
     // anything consumes a value, and a sequence's default cache is 1000, so one
     // NEXTVAL moves it by a thousand. The sequence's own shape — start, min,
@@ -92,7 +119,7 @@ export const EXCLUSIONS: readonly string[] = VOLATILE.map(({ records }) => recor
  * A schema as a diagnostic about it has to name it, cut into the lines it is
  * compared in, with the lines above rewritten to what they mean.
  *
- * Lines, and in the order the dump wrote them. `mariadb-dump` renders the
+ * Lines, and in the order the dump wrote them. A dump client renders the
  * catalogue in a fixed order, so two dumps holding the same statements in a
  * different arrangement really are two different databases; nothing here is
  * sorted. Both sides of any comparison come from one tool through one split, so

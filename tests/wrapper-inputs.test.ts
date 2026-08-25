@@ -2,12 +2,12 @@ import { expect, test } from "bun:test";
 
 import { isForeign, isList, mapAt, textAt } from "../.github/actions/_lib/foreign.ts";
 
-import { dbImage, root, WRAPPER } from "./workflow.ts";
+import { root, serviceImages, SERVER_IMAGE, WRAPPER } from "./workflow.ts";
 
 const CHECK_CALL = /^gokayo43\/dev-config\/\.github\/workflows\/check\.yml@([0-9a-f]{40})$/;
 
 /** This repo's own action, which the wrapper reaches the only way a called workflow can. */
-const OWN_ACTION = /^gokayo43\/dev-config-mariadb\/\.github\/actions\/[\w-]+@([0-9a-f]{40})$/;
+const OWN_ACTION = /^gokayo43\/dev-config-db\/\.github\/actions\/[\w-]+@([0-9a-f]{40})$/;
 
 /** `${{ inputs.build }}` and `${{ inputs['test-network'] }}` are one reference written two ways. */
 const FORWARD = /^\$\{\{\s*inputs(?:\.([\w-]+)|\[(['"])([^'"]+)\2\])\s*\}\}$/;
@@ -27,20 +27,30 @@ const INSTALLED = "node_modules/@gokayo43/dev-config/.github/workflows/check.yml
 const ACTIONS = ".github/actions";
 
 /**
- * The inputs this wrapper declares that dev-config has no name for at all.
+ * The inputs this wrapper declares that dev-config has no name for at all, each
+ * with the shape its kind is declared in.
  *
  * Every other input here is dev-config's, either handed on or spelled the way
  * they spell the same idea — and the tests below hold each of those to their
  * type and default, so that a consumer moving between the two workflows writes
- * one call either way. This set is the exception, and it is small on purpose:
- * an input earns a place in it only when the fact it names is MariaDB's own and
- * borrowing their spelling would name the wrong thing. `datetime-allowlist` is
- * the first, and docs/gates/db-datetime.md is why.
+ * one call either way. This map is the exception, and it is small on purpose:
+ * an input earns a place in it only when the fact it names is this family's own
+ * and borrowing dev-config's spelling would name the wrong thing.
+ * `datetime-allowlist` is one, and docs/gates/db-datetime.md is why;
+ * `database-image` is the other, and it is the server a consumer runs, which
+ * dev-config's Postgres job has no question to ask.
  *
  * Written out rather than derived, so that adding one is a decision somebody
- * made rather than a name that stopped matching.
+ * made rather than a name that stopped matching — and the shape is written with
+ * it, because the two kinds are held to different rules below.
  */
-const OURS = new Set(["datetime-allowlist"]);
+const OURS = new Map<string, "an allowlist" | "a pinned image">([
+  ["datetime-allowlist", "an allowlist"],
+  [SERVER_IMAGE, "a pinned image"],
+]);
+
+/** The rule dev-config's pin gate holds an image to, which this repo's own default is held to here. */
+const DIGEST = /@sha256:[0-9a-f]{64}$/;
 
 /** What a caller may write beside a called workflow's input name. */
 type Argument = string | boolean;
@@ -181,19 +191,15 @@ function ownJobs({ document }: Read): unknown[] {
   });
 }
 
-/**
- * Every image a job of this workflow declares as a service — read at the one
- * depth a service image sits at, never walked. A walk would take any string
- * that looks like a reference with it, and the value this is compared against
- * is itself one: the test would then be asking whether a value equals itself.
- */
-function serviceImages({ document }: Read): string[] {
-  return Object.values(mapAt(document, "jobs")).flatMap((job) =>
-    Object.values(mapAt(job, "services")).flatMap((service) => {
-      const image = textAt(service, "image");
-      return image === undefined ? [] : [image];
-    }),
-  );
+/** Every value the wrapper's own jobs write beside `key` in a step's `with:`. */
+function jobStepsWith(key: string): string[] {
+  return ownJobs(wrapper).flatMap((job) => {
+    const steps = isForeign(job) ? job["steps"] : undefined;
+    return (isList(steps) ? steps : []).flatMap((step) => {
+      const given = textAt(mapAt(step, "with"), key);
+      return given === undefined ? [] : [given];
+    });
+  });
 }
 
 const alphabetically = (a: string, b: string): number => a.localeCompare(b);
@@ -244,9 +250,10 @@ test("every input the wrapper shares with dev-config is declared exactly as dev-
   // A type or a default of this repo's own is a wrapper that answers for
   // dev-config: a caller who omits the input gets this file's idea of what it
   // means, and the workflow that reads it never sees the difference. It holds
-  // for an input of this repo's own too, and for a stronger reason — the two so
-  // far are `database` and `db-gate-evidence`, which this repo implements for
-  // MariaDB and dev-config implements for Postgres. A consumer switching
+  // for an input of this repo's own too, and for a stronger reason — the four so
+  // far are `database`, `upgrade-gate`, `db-gate-evidence` and `start-command`,
+  // which this repo implements for the MySQL family and dev-config implements
+  // for Postgres. A consumer switching
   // between the two workflows writes one call either way, and a name that meant
   // something different here is the trap that shape is worth avoiding.
   expect(differs).toEqual([]);
@@ -260,14 +267,26 @@ test("every input the wrapper shares with dev-config is declared exactly as dev-
  * check above exists to prevent — or it could be declared in some shape other
  * than the one every allowlist in the fleet has.
  */
-test("an input of this repo's own is a name dev-config does not have, in the shape the fleet gives an allowlist", () => {
-  for (const name of OURS) {
+test("an input of this repo's own is a name dev-config does not have, in the shape its kind has", () => {
+  for (const [name, shape] of OURS) {
     expect(`dev-config declares ${name}: ${name in inputsOf(upstream)}`).toBe(
       `dev-config declares ${name}: false`,
     );
     const declared = inputsOf(wrapper)[name];
     expect(declared?.type).toBe("string");
-    expect(declared?.default).toBe("");
+    if (shape === "an allowlist") {
+      expect(`${name} defaults to: ${String(declared?.default)}`).toBe(`${name} defaults to: `);
+      continue;
+    }
+    // The image default is the one thing in this repo that dev-config's own pin
+    // gate cannot see any more: it reads `services.<id>.image`, and the server
+    // stopped being a service so that a consumer could declare it (dev-config#68
+    // is why an expression cannot go there). So the rule it would have applied is
+    // applied here instead — a default that drifted to a mutable tag would
+    // otherwise ship to every consumer who writes nothing.
+    expect(`${name} defaults to a digest: ${DIGEST.test(String(declared?.default))}`).toBe(
+      `${name} defaults to a digest: true`,
+    );
   }
 });
 
@@ -312,18 +331,24 @@ test("README.md's account of the input surface is dev-config's own", async () =>
   ).toEqual(Object.keys(inputsOf(upstream)).toSorted(alphabetically));
 });
 
-test("the call turns dev-config's database job off with a literal, whatever the caller asked for", () => {
-  // Everything else in the call is a caller's input handed on; a second literal
-  // would be this workflow answering for a consumer in a value nothing here
+test("nothing in the call is this workflow answering for its consumer", () => {
+  // A literal here would be this workflow deciding a value nothing in it
   // declares, and dev-config cannot tell that from the consumer's own answer.
   //
-  // This is also the whole of what keeps the wrapper's own `database` input off
-  // dev-config's Postgres job: the value beside that name is `false` and not an
-  // expression, and the check above refuses this repo's input reaching any
-  // other name of theirs.
+  // There used to be exactly one, and what happened to it is worth keeping: while
+  // their `database` was a boolean meaning "run our Postgres job", this workflow
+  // answered it `false` and kept an input of the same name meaning "run mine" —
+  // one spelling, two questions, and a literal to hold them apart. Their enum has
+  // `external` for a workflow that runs the database gates in that job's place,
+  // so the two questions became one input and the literal went with them.
   expect(
     Object.entries(call(wrapper, "check.yml").with).filter(([, value]) => !forwards(value)),
-  ).toEqual([["database", false]]);
+  ).toEqual([]);
+
+  // And the value that decides both jobs really is handed on rather than
+  // dropped: a call that stopped naming it would leave dev-config on its own
+  // default while the job here still ran off the consumer's answer.
+  expect(forwarded(wrapper, "check.yml").map(([key]) => key)).toContain("database");
 });
 
 test("this repo is gated by, and installs, the dev-config it hands its consumers", async () => {
@@ -410,15 +435,34 @@ test("every action the wrapper pins ships the actions this repo has now", async 
 });
 
 /**
- * The server the job runs and the server the gate dumps from are one image, and
- * they are written twice because GitHub gives a service image no way to read a
- * value declared anywhere else — not an `env:`, not another job's output. So the
- * two statements are held together here instead.
- *
- * A drift between them is the worst kind of quiet: the gate would render one
- * major's catalogue with another major's client, compare the two renderings to
- * each other, and pass.
+ * The server the job starts and the server the gate dumps from are one image,
+ * and now they are one statement of it: both steps are handed the caller's
+ * input. A drift between two literals used to be the worst kind of quiet — the
+ * gate would render one product's catalogue with another product's client,
+ * compare the two renderings to each other, and pass — and this is what keeps
+ * the shape that made that unsayable.
  */
-test("the image the gate dumps with is the image the job runs its server from", async () => {
-  expect(serviceImages(wrapper)).toContain(await dbImage());
+test("every step that takes a server image is handed the one the caller declared", () => {
+  const handed = [...jobStepsWith(SERVER_IMAGE)];
+
+  // The server and the dump client: two steps, one value, and a third that took
+  // an image would have to be one too.
+  expect(handed.length).toBeGreaterThanOrEqual(2);
+  expect(handed.filter((value) => value !== `\${{ inputs['${SERVER_IMAGE}'] }}`)).toEqual([]);
+});
+
+/**
+ * And the reason the server is a step rather than a service, stated where a
+ * change would undo it: dev-config's pin gate reads `services.<id>.image` as a
+ * literal and refuses anything that is not a digest, so an input cannot go there
+ * (dev-config#68). A future edit that moves the server back into `services`
+ * fails here, with the reason, rather than in dev-config's gate with a message
+ * about a mutable tag.
+ */
+test("no service image is an expression, which is why the server is not one", async () => {
+  const images = await serviceImages();
+
+  expect(images).not.toEqual([]);
+  expect(images.filter((image) => image.includes("${{"))).toEqual([]);
+  expect(images.filter((image) => !DIGEST.test(image))).toEqual([]);
 });

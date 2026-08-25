@@ -2,7 +2,7 @@ import { afterAll, afterEach } from "bun:test";
 
 import { removeCheckouts } from "./action-step.ts";
 import { stopApps } from "./app.ts";
-import { stop } from "./mariadb.ts";
+import { stop } from "./servers.ts";
 import { removeRoots } from "./tree.ts";
 
 /**
@@ -11,7 +11,7 @@ import { removeRoots } from "./tree.ts";
  * their module first. That distinction is the difference between a shared
  * server and a trap, and between a suite that cleans up after itself and one
  * that leaves an app per case running and a project per case on disk —
- * `mariadb.ts`, `app.ts` and `tree.ts` each say so where the work is. Importing
+ * `servers.ts`, `app.ts` and `tree.ts` each say so where the work is. Importing
  * them here starts nothing.
  *
  * The order inside the per-case hook is load-bearing: an app writes its pid

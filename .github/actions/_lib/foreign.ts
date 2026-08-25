@@ -2,7 +2,7 @@
  * A document nobody here wrote, read one key at a time.
  *
  * Everything the gates in this repo grade is foreign: another repo's
- * `package.json`, a workflow's YAML, a row a MariaDB answered with. None of it
+ * `package.json`, a workflow's YAML, a row a server answered with. None of it
  * has a schema this repo can hold — the keys are whatever that repo wrote, and
  * a modelled type would have to be every valid and invalid one of them at once
  * while claiming exactly what has not been checked yet.

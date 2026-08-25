@@ -1,0 +1,70 @@
+name: Database server
+description: >-
+  Starts the server the rest of the database job grades, from the image the
+  consuming repo pinned, and waits until it answers a query on the URL the
+  calling job declared. Either server product this repo serves is one image
+  reference here — nothing in this step reads a product name out of it.
+  docs/gates/db-server.md is what it proves and what it cannot catch.
+
+inputs:
+  database-image:
+    description: >-
+      The image to run the server from, pinned by digest. Required, and
+      deliberately without a default: the workflow that calls this declares one
+      for its consumers, and a second default here would be a second place a
+      consumer's choice of server is written down.
+    required: true
+  database-url:
+    description: >-
+      The database the gates after this step use, as the calling job read it
+      before running a line of the graded repo's code. It is also this step's
+      own instruction: the port it publishes on, the root password the image
+      initialises with, and the database it creates are read from it, so no two
+      steps can disagree about which server was started.
+    required: true
+  workspace:
+    description: >-
+      The workspace this job was given, which is what the container is named
+      after: on a self-hosted runner two jobs share a docker daemon, and this
+      step reclaims its name before it creates. Passed by the action from
+      `github.workspace` rather than read out of the environment, since a step
+      of the graded repo can write the variable and not the expression context.
+    required: true
+  bun:
+    description: >-
+      The absolute path to the interpreter this step runs under, from the same
+      reading. A bare `bun` is resolved through a PATH the graded repo's own
+      steps can prepend to, which replaces this step with a program that exits 0.
+    required: true
+  path:
+    description: >-
+      The search path this step's own tools are found on, from the same reading
+      — `docker`, which starts the server. A digest pins which image runs, and
+      nothing in it pins which program is asked to run that image.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Start the server this job grades
+      shell: bash
+      # The action's own checkout, never the graded repo's. `bun` reads a
+      # top-level `preload` out of a `bunfig.toml` in its working directory, so a
+      # step running in the graded checkout runs whatever that repo's bunfig
+      # names, before a line of this one.
+      working-directory: ${{ github.action_path }}
+      env:
+        INPUT_DATABASE_IMAGE: ${{ inputs['database-image'] }}
+        INPUT_WORKSPACE: ${{ inputs.workspace }}
+        INPUT_BUN: ${{ inputs.bun }}
+        PATH: ${{ inputs.path }}
+        # Declared by this step, which is what makes it this step's: the runner
+        # overlays a step's own `env:` over the environment it inherited, so a
+        # variable of this name written into $GITHUB_ENV earlier does not reach
+        # this step.
+        DATABASE_URL: ${{ inputs['database-url'] }}
+      run: |
+        set -euo pipefail
+        # shellcheck source=/dev/null
+        . "$GITHUB_ACTION_PATH/../_lib/gate.sh"
+        gate server.main.ts

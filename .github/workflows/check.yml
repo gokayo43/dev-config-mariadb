@@ -1,14 +1,15 @@
 name: Check
 
-# The gate the two MariaDB-bound repos run, called by reference:
-#   jobs.check.uses: gokayo43/dev-config-mariadb/.github/workflows/check.yml@<sha>
+# The gate the two MySQL-family repos run, called by reference:
+#   jobs.check.uses: gokayo43/dev-config-db/.github/workflows/check.yml@<sha>
 #
 # Everything static is dev-config's, unchanged: this workflow calls that one
 # rather than restating any of it, so a gate lands here when the pin below moves
-# and never because a copy drifted. The `database: false` in that call is not a
-# preference — dev-config's database job is Postgres, and the MariaDB jobs this
-# workflow adds are what a consumer gets instead. This workflow's own `database`
-# input turns those on and never reaches that call.
+# and never because a copy drifted. `database: external` is the value their
+# check.yml has for exactly this arrangement — their database job is Postgres,
+# and a workflow wrapping theirs runs the database gates in its place — so the
+# input is handed on rather than answered here, and the job below is what a
+# consumer gets instead.
 on:
   workflow_call:
     inputs:
@@ -44,6 +45,9 @@ on:
       stack-allowlist:
         type: string
         default: ""
+      data-jobs-external:
+        type: string
+        default: ""
       test-network:
         type: string
         default: ""
@@ -52,11 +56,36 @@ on:
         default: ""
       database:
         description: >-
-          Replay the repo's own migrations onto an empty MariaDB, twice, compare
-          the schema either side, then boot the app against the result, probe it
-          where the repo has a probe, and ramp it. This is a job of this repo's
-          own and this input never reaches dev-config's check.yml, whose job of
-          that name is Postgres.
+          `external` runs this workflow's own database job — the repo's
+          migrations replayed onto an empty database on the server it pinned,
+          the upgrade path where it asks for one, the DATETIME catalogue, and
+          the app booted, probed and ramped against the result. It is
+          dev-config's own spelling and its own value for exactly this: a
+          workflow wrapping theirs runs the database gates in that job's place.
+          `none` is a repo with no schema. `postgres` is refused here rather
+          than served — a Postgres repo calls dev-config directly.
+        type: string
+        default: none
+      database-image:
+        description: >-
+          The server that job runs, as an image pinned by digest — a MariaDB or
+          a MySQL 8 one, which are the two products these gates are certified
+          against. It is the consumer's own declaration and their own pin
+          discipline: nothing here infers a product from it, and the gates ask
+          the image what it ships rather than the reference what it is called.
+          The default is the MariaDB build this repo certifies, so a consumer
+          who runs that writes nothing.
+        type: string
+        default: mariadb:11.4@sha256:4f1d8d202fcf7bcb3902f63af09f9c1a050c2922a89652f22abaec0d4f015e83
+      upgrade-gate:
+        description: >-
+          Also prove that a database built from the base ref's migrations and
+          upgraded by this branch's reaches the schema a fresh one gets — for
+          repos whose database is deployed somewhere. dev-config's check.yml
+          stopped asking this of a caller passing `database: external`, on the
+          argument that a workflow replacing the database gates carries the
+          upgrade duty for its own dialects; this input is that duty for
+          MariaDB and MySQL 8. docs/gates/db-upgrade.md is what it proves.
         type: boolean
         default: false
       db-gate-evidence:
@@ -98,7 +127,7 @@ permissions:
 
 jobs:
   static:
-    uses: gokayo43/dev-config/.github/workflows/check.yml@602fca2f24341ef9c445b4a6f750e887cf156f37 # v0.50.1
+    uses: gokayo43/dev-config/.github/workflows/check.yml@d1f756aacca92fd99a66ba3370f290c41cb36a22 # v0.51.5
     with:
       build: ${{ inputs.build }}
       affected: ${{ inputs.affected }}
@@ -107,14 +136,16 @@ jobs:
       mutation-floor: ${{ inputs['mutation-floor'] }}
       contract-exemptions: ${{ inputs['contract-exemptions'] }}
       stack-allowlist: ${{ inputs['stack-allowlist'] }}
+      data-jobs-external: ${{ inputs['data-jobs-external'] }}
       test-network: ${{ inputs['test-network'] }}
       test-suite-evidence: ${{ inputs['test-suite-evidence'] }}
-      # A literal, always. Every other value in this call is a caller's input
-      # handed on; this one is the workflow's own answer, and the input of the
-      # same name above decides a job here rather than that one. README.md names
-      # the inputs that reach neither, and the suite holds that list to what
-      # dev-config declares at the pin above.
-      database: false
+      # Handed on rather than answered here, which it was not always: while
+      # dev-config's `database` was a boolean meaning "run our Postgres job",
+      # this workflow had to answer it with a literal `false` and keep an input
+      # of the same name for its own job — one spelling, two questions. Their
+      # enum has a value that means "a workflow wrapping this one runs them",
+      # so the two questions became one and the literal died with them.
+      database: ${{ inputs.database }}
 
   # Every input aimed at the database job is a request that job would otherwise
   # never see, and a gate nobody notices is off is the worst kind — so a call
@@ -131,6 +162,8 @@ jobs:
     steps:
       - env:
           DATABASE: ${{ inputs.database }}
+          DATABASE_IMAGE: ${{ inputs['database-image'] }}
+          UPGRADE_GATE: ${{ inputs['upgrade-gate'] }}
           DB_GATE_EVIDENCE: ${{ inputs['db-gate-evidence'] }}
           START_COMMAND: ${{ inputs['start-command'] }}
           HEALTH_URL: ${{ inputs['health-url'] }}
@@ -139,12 +172,17 @@ jobs:
           CAPACITY_SCRIPT: ${{ inputs['capacity-script'] }}
           CAPACITY_PATH: ${{ inputs['capacity-path'] }}
           ROUTE_ALLOWLIST: ${{ inputs['route-allowlist'] }}
-          # The two defaults above, written out a second time because a step
+          # The three defaults above, written out a second time because a step
           # cannot read an input's declared default. tests/refusals.test.ts
-          # holds the two statements together; `changed_from_default` below is
-          # why they are compared at all.
+          # holds the pairs together; `changed_from_default` below is why they
+          # are compared at all.
+          # A boolean has no empty spelling either, so it is compared with its
+          # declared default like the two below rather than tested for being
+          # non-empty. Quoted, because what a step reads is always a string.
+          UPGRADE_GATE_DEFAULT: "false"
           START_COMMAND_DEFAULT: bun run start
           HEALTH_URL_DEFAULT: http://localhost:3000/api/health
+          DATABASE_IMAGE_DEFAULT: mariadb:11.4@sha256:4f1d8d202fcf7bcb3902f63af09f9c1a050c2922a89652f22abaec0d4f015e83
           DATETIME_ALLOWLIST: ${{ inputs['datetime-allowlist'] }}
         shell: bash
         run: |
@@ -155,6 +193,10 @@ jobs:
             wrong=1
           }
 
+          # `external` is the value that asks for the database job, so it is
+          # what every rule below compares against — the input is dev-config's
+          # enum rather than a boolean of this workflow's own.
+          #
           # The rule has two shapes and this is the first: an input that
           # defaults to "" was passed iff it is non-empty.
           #
@@ -163,22 +205,22 @@ jobs:
           # returns non-zero, and the step would die on a rule that correctly
           # did not fire.
           needs_job() {
-            if [ "$DATABASE" != true ] && [ -n "$2" ]; then
-              refuse "$1 needs database: true — $3, and this call leaves that job off"
+            if [ "$DATABASE" != external ] && [ -n "$2" ]; then
+              refuse "$1 needs database: external — $3, and this call leaves that job off"
             fi
             return 0
           }
 
-          # The second shape, for the two inputs that carry a value rather than
-          # an empty default: a workflow_call input cannot be asked whether the
-          # caller passed it, so "passed" is spelled "differs from the default".
-          # That leaves one caller invisible — the one who passes exactly the
-          # default — which docs/gates/db-serving.md names rather than papers
-          # over, and dev-config#66 is the same two inputs going unrefused
-          # there, where the guard has only the first shape.
+          # The second shape, for the three inputs that carry a value rather
+          # than an empty default: a workflow_call input cannot be asked whether
+          # the caller passed it, so "passed" is spelled "differs from the
+          # default". That leaves one caller invisible — the one who passes
+          # exactly the default — which docs/gates/db-serving.md names rather
+          # than papers over, and dev-config#66 is two of the three going
+          # unrefused there, where the guard has only the first shape.
           changed_from_default() {
-            if [ "$DATABASE" != true ] && [ "$2" != "$3" ]; then
-              refuse "$1 needs database: true — $4, and this call leaves that job off"
+            if [ "$DATABASE" != external ] && [ "$2" != "$3" ]; then
+              refuse "$1 needs database: external — $4, and this call leaves that job off"
             fi
             return 0
           }
@@ -197,10 +239,22 @@ jobs:
             "the route floor is measured across the database job's ramp"
           needs_job datetime-allowlist "$DATETIME_ALLOWLIST" \
             "it waives columns the database job's DATETIME step grades"
+          changed_from_default upgrade-gate "$UPGRADE_GATE" "$UPGRADE_GATE_DEFAULT" \
+            "it adds a step to the database job, which replays the base ref's migrations"
+          changed_from_default database-image "$DATABASE_IMAGE" "$DATABASE_IMAGE_DEFAULT" \
+            "it is the server the database job starts, and this call starts none"
           changed_from_default start-command "$START_COMMAND" "$START_COMMAND_DEFAULT" \
             "it is how the database job's boot step starts the app"
           changed_from_default health-url "$HEALTH_URL" "$HEALTH_URL_DEFAULT" \
             "it is what the database job's boot step polls and what its ramp measures"
+
+          # The one value of dev-config's enum this workflow does not serve. A
+          # repo whose database is Postgres wants their check.yml rather than
+          # this one, and passing it here would hand their Postgres job a repo
+          # that called this workflow for its MySQL-family gates.
+          if [ "$DATABASE" = postgres ]; then
+            refuse "database: postgres is not a value this workflow serves — its database job is MariaDB and MySQL 8. A repo whose database is Postgres calls gokayo43/dev-config's check.yml directly."
+          fi
 
           # Asked whatever the job, because it is a fact about the pair rather
           # than about the job: a bound with no command under it bounds nothing,
@@ -212,40 +266,24 @@ jobs:
           exit "$wrong"
 
   database:
-    if: inputs.database
+    if: inputs.database == 'external'
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
-    # Empty on every run, which is the one state no developer database is ever
-    # in. Pinned by digest for the same reason an action is, with the tag kept
-    # inline: that is the form Renovate's docker datasource maintains.
+    # The database server is NOT here, and that is the one thing about this job
+    # worth knowing before reading it. A service image is a literal in this
+    # file, and the server is the consumer's to pin — `services.<id>.image`
+    # holding `${{ inputs[…] }}` is read by dev-config's own pin gate as a
+    # mutable tag and refused (gokayo43/dev-config#68). So the server is started
+    # by a step instead, from the image the caller declared: db-server, first in
+    # the job, publishing on the loopback port DATABASE_URL below names, which
+    # is what a service container would have done.
     #
-    # 11.4 because that is what the server this gate is written for runs —
-    # nfp-elysia's, probed at 11.4.12-MariaDB. The other repo named in README.md
-    # runs MySQL 8.0.32 rather than MariaDB at all, which is a lane this
-    # workflow does not have and issue #9 is where it is decided; until then a
-    # consumer on MySQL is refused by this image rather than quietly graded
-    # against another server's idea of a schema.
-    #
-    # Redis is started with it, unconditionally: a repo whose migrator imports
-    # its own environment module gets that module's Redis check on the way in,
-    # and an idle container costs a couple of seconds.
+    # Redis stays a service and is started unconditionally: it is this
+    # workflow's own pin rather than a consumer's, and a repo whose migrator
+    # imports its own environment module gets that module's Redis check on the
+    # way in, for the couple of seconds an idle container costs.
     services:
-      mariadb:
-        image: mariadb:11.4@sha256:4f1d8d202fcf7bcb3902f63af09f9c1a050c2922a89652f22abaec0d4f015e83
-        env:
-          MARIADB_ROOT_PASSWORD: mariadb
-          MARIADB_DATABASE: app
-        ports:
-          - 3306:3306
-        # Over TCP on purpose. The image's entrypoint runs a temporary server
-        # with networking off while it initialises, so a socket ping answers
-        # while the database the job is about to migrate does not exist yet.
-        options: >-
-          --health-cmd "mariadb-admin --protocol=tcp -h 127.0.0.1 -uroot -pmariadb ping"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 30
       redis:
         image: redis:7-alpine@sha256:ff02b58f971e7d7d156a1267e283fcbbeee91773b6aa36c49dac28ecfe28eadf
         ports:
@@ -259,12 +297,21 @@ jobs:
     # 127.0.0.1 rather than localhost: a MySQL-family client reads that name as
     # an instruction to use a unix socket, and the server is a container.
     env:
-      DATABASE_URL: mysql://root:mariadb@127.0.0.1:3306/app
+      DATABASE_URL: mysql://root:db-gate@127.0.0.1:3306/app
       REDIS_URL: redis://127.0.0.1:6379
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          # The upgrade gate replays the base ref's migrations, which are in the
+          # history — and this job cannot fetch them later, because it holds no
+          # credentials and every repo here is private. Unconditional rather
+          # than keyed to the input, which is dev-config's own reasoning for the
+          # same line: an expression that has to produce 0 rides on how GitHub
+          # casts it, and the failure mode of getting that wrong is a gate that
+          # reports nothing rather than one that says so. The static job already
+          # pays for the same history in the same run.
+          fetch-depth: 0
           # Nothing in this job pushes, and it installs and runs the repo's own
           # dependencies in the same workspace the token would sit in.
           persist-credentials: false
@@ -297,6 +344,18 @@ jobs:
             echo "path=$PATH"
           } >> "$GITHUB_OUTPUT"
 
+      # First of the job's own steps, where the service container it replaces
+      # would have been: the server is a fact about this job rather than about
+      # any one gate, and every step below connects to it. By full path and SHA
+      # rather than `./` for the reason the steps below carry.
+      - uses: gokayo43/dev-config-db/.github/actions/db-server@28d44f7374042b20818c921131a07aec1c698a8c
+        with:
+          database-image: ${{ inputs['database-image'] }}
+          database-url: ${{ steps.pinned.outputs['database-url'] }}
+          workspace: ${{ github.workspace }}
+          bun: ${{ steps.pinned.outputs.bun }}
+          path: ${{ steps.pinned.outputs.path }}
+
       - run: bun install --frozen-lockfile
 
       # The same step dev-config's database job runs, and for the same reason: a
@@ -313,14 +372,28 @@ jobs:
       # workflow pinning it are two commits — this repo's release contract, in
       # CLAUDE.md under "Releasing an action".
       #
-      # The image is written twice in this file, in the service above and here,
-      # because GitHub gives a service image no way to read a value declared
-      # anywhere else. tests/wrapper-inputs.test.ts is what holds the two to one
-      # digest.
-      - uses: gokayo43/dev-config-mariadb/.github/actions/db-replay@3d650f2a40dfc609bddb5c1c10bd6530e58faae9
+      # The same image the step above started the server from, because the dump
+      # client comes out of it: a schema rendered by one build of one product
+      # and compared against another's is two renderings, not two schemas. It is
+      # one value rather than two statements — the input — and
+      # tests/wrapper-inputs.test.ts is what holds every step that takes an
+      # image to it.
+      - uses: gokayo43/dev-config-db/.github/actions/db-replay@28d44f7374042b20818c921131a07aec1c698a8c
         with:
-          # renovate: datasource=docker depName=mariadb
-          db-image: mariadb:11.4@sha256:4f1d8d202fcf7bcb3902f63af09f9c1a050c2922a89652f22abaec0d4f015e83
+          database-image: ${{ inputs['database-image'] }}
+          database-url: ${{ steps.pinned.outputs['database-url'] }}
+          bun: ${{ steps.pinned.outputs.bun }}
+          path: ${{ steps.pinned.outputs.path }}
+
+      # After the replay and never before it, and for the same reason the step
+      # below is: this is the half of "do these migrations rebuild the schema"
+      # that a database nobody deployed cannot answer, and it compares what an
+      # upgrade reaches against the schema the replay just built. Its own
+      # database, on the same server, dropped whichever way it goes.
+      - if: inputs['upgrade-gate']
+        uses: gokayo43/dev-config-db/.github/actions/db-upgrade@28d44f7374042b20818c921131a07aec1c698a8c
+        with:
+          database-image: ${{ inputs['database-image'] }}
           database-url: ${{ steps.pinned.outputs['database-url'] }}
           bun: ${{ steps.pinned.outputs.bun }}
           path: ${{ steps.pinned.outputs.path }}
@@ -329,7 +402,7 @@ jobs:
       # migrations produced, so it needs the schema that step builds rather than
       # one written by hand. Its own pin, because an action and the workflow
       # pinning it are two commits — CLAUDE.md, "Releasing an action".
-      - uses: gokayo43/dev-config-mariadb/.github/actions/db-datetime@3d650f2a40dfc609bddb5c1c10bd6530e58faae9
+      - uses: gokayo43/dev-config-db/.github/actions/db-datetime@28d44f7374042b20818c921131a07aec1c698a8c
         with:
           datetime-allowlist: ${{ inputs['datetime-allowlist'] }}
           database-url: ${{ steps.pinned.outputs['database-url'] }}
@@ -341,7 +414,7 @@ jobs:
       # under load. A step of this job rather than a job of its own, for the
       # reason CONTEXT.md gives at "A database job". docs/gates/db-serving.md is
       # the page.
-      - uses: gokayo43/dev-config-mariadb/.github/actions/db-serving@3d650f2a40dfc609bddb5c1c10bd6530e58faae9
+      - uses: gokayo43/dev-config-db/.github/actions/db-serving@28d44f7374042b20818c921131a07aec1c698a8c
         with:
           start-command: ${{ inputs['start-command'] }}
           health-url: ${{ inputs['health-url'] }}
@@ -389,6 +462,7 @@ jobs:
           path: |
             ${{ runner.temp }}/replay-from-empty.schema
             ${{ runner.temp }}/replay-again.schema
+            ${{ runner.temp }}/upgraded-from-base.schema
             ${{ runner.temp }}/server.log
             ${{ runner.temp }}/capacity.json
             ${{ runner.temp }}/route-log-before.json
