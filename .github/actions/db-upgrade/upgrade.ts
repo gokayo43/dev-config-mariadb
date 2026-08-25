@@ -212,7 +212,7 @@ async function upgraded(
           .filter(({ clocks }) => clocks.length > 0 && !clocks.every((clock) => applied.has(clock)))
           .map(
             ({ dir }) =>
-              `${from} carries the migration lineage ${dir}, and replaying it applied none of what its journal names — this branch's db:migrate no longer runs it. A database deployed from ${from} keeps everything that lineage built, so a schema comparison that skipped it on both sides would compare equal and say nothing.`,
+              `${from} carries the migration lineage ${dir}, and replaying it left the journal without every migration that lineage names — this branch's db:migrate does not run all of it. A database deployed from ${from} keeps everything that lineage built, so a schema comparison that skipped it on both sides would compare equal and say nothing.`,
           );
   if (unapplied.length > 0) return unapplied;
 

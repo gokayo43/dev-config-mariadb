@@ -27,6 +27,14 @@ export interface Repo {
   shallow: () => Promise<string>;
 }
 
+/** What a rev resolves to in a fixture, for the cases that name the base ref themselves. */
+export async function headOf(root: string, rev: string): Promise<string> {
+  const proc = Bun.spawn(["git", "rev-parse", rev], { cwd: root, stdout: "pipe", stderr: "pipe" });
+  const [stdout, status] = await Promise.all([new Response(proc.stdout).text(), proc.exited]);
+  if (status !== 0) throw new Error(`git rev-parse ${rev} failed in ${root}`);
+  return stdout.trim();
+}
+
 async function git(root: string, ...args: readonly string[]): Promise<void> {
   const proc = Bun.spawn(["git", ...args], {
     cwd: root,
