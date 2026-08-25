@@ -348,7 +348,7 @@ jobs:
       # would have been: the server is a fact about this job rather than about
       # any one gate, and every step below connects to it. By full path and SHA
       # rather than `./` for the reason the steps below carry.
-      - uses: gokayo43/dev-config-db/.github/actions/db-server@f14c9e273316eaff33057bc9520f9d674c66ddb6
+      - uses: gokayo43/dev-config-db/.github/actions/db-server@95e477ee992517979e3ba673f084bea813d7f30f
         with:
           database-image: ${{ inputs['database-image'] }}
           database-url: ${{ steps.pinned.outputs['database-url'] }}
@@ -377,7 +377,7 @@ jobs:
       # one value rather than two statements — the input — and
       # tests/wrapper-inputs.test.ts is what holds every step that takes an
       # image to it.
-      - uses: gokayo43/dev-config-db/.github/actions/db-replay@f14c9e273316eaff33057bc9520f9d674c66ddb6
+      - uses: gokayo43/dev-config-db/.github/actions/db-replay@95e477ee992517979e3ba673f084bea813d7f30f
         with:
           database-image: ${{ inputs['database-image'] }}
           database-url: ${{ steps.pinned.outputs['database-url'] }}
@@ -390,7 +390,7 @@ jobs:
       # upgrade reaches against the schema the replay just built. Its own
       # database, on the same server, dropped whichever way it goes.
       - if: inputs['upgrade-gate']
-        uses: gokayo43/dev-config-db/.github/actions/db-upgrade@d1f756aacca92fd99a66ba3370f290c41cb36a22
+        uses: gokayo43/dev-config-db/.github/actions/db-upgrade@95e477ee992517979e3ba673f084bea813d7f30f
         with:
           database-image: ${{ inputs['database-image'] }}
           database-url: ${{ steps.pinned.outputs['database-url'] }}
@@ -401,7 +401,7 @@ jobs:
       # migrations produced, so it needs the schema that step builds rather than
       # one written by hand. Its own pin, because an action and the workflow
       # pinning it are two commits — CLAUDE.md, "Releasing an action".
-      - uses: gokayo43/dev-config-db/.github/actions/db-datetime@f14c9e273316eaff33057bc9520f9d674c66ddb6
+      - uses: gokayo43/dev-config-db/.github/actions/db-datetime@95e477ee992517979e3ba673f084bea813d7f30f
         with:
           datetime-allowlist: ${{ inputs['datetime-allowlist'] }}
           database-url: ${{ steps.pinned.outputs['database-url'] }}
@@ -413,7 +413,7 @@ jobs:
       # under load. A step of this job rather than a job of its own, for the
       # reason CONTEXT.md gives at "A database job". docs/gates/db-serving.md is
       # the page.
-      - uses: gokayo43/dev-config-db/.github/actions/db-serving@f14c9e273316eaff33057bc9520f9d674c66ddb6
+      - uses: gokayo43/dev-config-db/.github/actions/db-serving@95e477ee992517979e3ba673f084bea813d7f30f
         with:
           start-command: ${{ inputs['start-command'] }}
           health-url: ${{ inputs['health-url'] }}
