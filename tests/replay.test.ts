@@ -6,7 +6,7 @@ import { textAt } from "../.github/actions/_lib/foreign.ts";
 import { replayGate } from "../.github/actions/db-replay/replay.ts";
 
 import { lineage, migratesFrom, type Migration, scripted } from "./lineage.ts";
-import { PRODUCTS, emptyDatabase, query } from "./servers.ts";
+import { DEFAULT as MARIADB, PRODUCTS, type Product, emptyDatabase, query } from "./servers.ts";
 import { serviceImages } from "./workflow.ts";
 import { materialise, type Tree, without } from "./tree.ts";
 
@@ -58,33 +58,45 @@ const ADDS_SLUG: Migration = {
   sql: "ALTER TABLE `thing` ADD `slug` varchar(80);\n",
 };
 
+/** Where a run leaves the two schemas it compared, per case. */
+interface Evidence {
+  readonly fromEmpty: string;
+  readonly replayed: string;
+}
+
+interface Ran {
+  readonly verdict: Verdict;
+  readonly url: string;
+  readonly evidence: Evidence;
+}
+
+/** The gate over one tree, against one product's server. */
+async function ran(product: Product, tree: Tree): Promise<Ran> {
+  const root = await materialise(tree);
+  const url = await emptyDatabase(product);
+  const evidence = {
+    fromEmpty: join(root, "from-empty.schema"),
+    replayed: join(root, "replayed.schema"),
+  };
+  return {
+    verdict: await replayGate({ root, url, image: product.image, ...evidence }),
+    url,
+    evidence,
+  };
+}
+
+/** The tables in the database a URL names, asked of the server rather than of the gate. */
+async function names(at: string): Promise<string[]> {
+  const answered = await query(
+    at,
+    "select table_name as name from information_schema.tables where table_schema = database()",
+  );
+  return answered.map((row) => textAt(row, "name") ?? "(no name)");
+}
+
 for (const product of PRODUCTS) {
   describe(product.name, () => {
-    /** Where a run leaves the two schemas it compared, per case. */
-    interface Evidence {
-      readonly fromEmpty: string;
-      readonly replayed: string;
-    }
-
-    interface Ran {
-      readonly verdict: Verdict;
-      readonly url: string;
-      readonly evidence: Evidence;
-    }
-
-    async function run(tree: Tree): Promise<Ran> {
-      const root = await materialise(tree);
-      const url = await emptyDatabase(product);
-      const evidence = {
-        fromEmpty: join(root, "from-empty.schema"),
-        replayed: join(root, "replayed.schema"),
-      };
-      return {
-        verdict: await replayGate({ root, url, image: product.image, ...evidence }),
-        url,
-        evidence,
-      };
-    }
+    const run = async (tree: Tree): Promise<Ran> => await ran(product, tree);
 
     /** What the gate threw, as the text a case can read: a rejection is the diagnostic here. */
     async function refusal(tree: Tree): Promise<string> {
@@ -94,15 +106,6 @@ for (const product of PRODUCTS) {
       } catch (thrown) {
         return String(thrown);
       }
-    }
-
-    /** The tables in the database a URL names, asked of the server rather than of the gate. */
-    async function names(at: string): Promise<string[]> {
-      const answered = await query(
-        at,
-        "select table_name as name from information_schema.tables where table_schema = database()",
-      );
-      return answered.map((row) => textAt(row, "name") ?? "(no name)");
     }
 
     test("a lineage that rebuilds the schema from empty, twice, passes", async () => {
@@ -200,41 +203,6 @@ for (const product of PRODUCTS) {
       expect(verdict.problems).toEqual([]);
       expect(verdict.note).toContain("replaying them leaves it identical");
     }, 60_000);
-
-    /**
-     * SF1, first member. A sequence's position is rendered into a `--no-data` dump
-     * as `DO SETVAL(<seq>, <next>, <cycles>)`, and a migration that consumes a
-     * value moves it — by a thousand, since a sequence's default cache is 1000. The
-     * schema is untouched either way, so a gate comparing the raw dumps refuses
-     * this repo over how many ids have been handed out.
-     *
-     * The one case here that is not asked of both products, and the reason is
-     * the product rather than the gate: MySQL has no sequences at all — no
-     * `CREATE SEQUENCE`, no `NEXTVAL` — so there is no such dump line for it to
-     * carry and nothing for this rule to be wrong about. The exclusion is a
-     * field on the product rather than a name test, so a third product would
-     * have to answer the question rather than inherit an answer.
-     */
-    test.if(product.sequences)(
-      "consuming a sequence value is not a schema change",
-      async () => {
-        // NOCACHE so every NEXTVAL moves the stored position. With the default cache
-        // of 1000 the move happens only when a replay crosses the cache boundary,
-        // which is a real way to hit this and a useless way to test it.
-        const { verdict } = await run({
-          ...migratesFrom(REPLAYING, "drizzle"),
-          ...lineage("drizzle", {
-            tag: "0000_seq",
-            when: 1_000,
-            sql: "CREATE SEQUENCE IF NOT EXISTS `counter` NOCACHE;\nSELECT NEXTVAL(`counter`);\n",
-          }),
-        });
-
-        expect(verdict.problems).toEqual([]);
-        expect(verdict.note).toContain("replaying them leaves it identical");
-      },
-      60_000,
-    );
 
     /**
      * SF1, second member. `DROP EVENT IF EXISTS` before `CREATE EVENT` is the
@@ -418,3 +386,38 @@ for (const product of PRODUCTS) {
     }, 60_000);
   });
 }
+
+/**
+ * SF1, first member, and the one case in this file that is about a single
+ * product rather than about the gate.
+ *
+ * A sequence's position is rendered into a `--no-data` dump as
+ * `DO SETVAL(<seq>, <next>, <cycles>)`, and a migration that consumes a value
+ * moves it — by a thousand, since a sequence's default cache is 1000. The schema
+ * is untouched either way, so a gate comparing the raw dumps refuses this repo
+ * over how many ids have been handed out.
+ *
+ * It runs against MariaDB alone because MySQL has no sequences at all — no
+ * `CREATE SEQUENCE`, no `NEXTVAL` — so there is no such dump line for it to
+ * carry and nothing for this rule to be wrong about. Written as a case of its
+ * own rather than as a case the other product skips: a skipped test is a suite
+ * quietly not testing something, which dev-config's test-suite gate refuses
+ * outright, and this is not a case MySQL fails to run — it is a case MySQL has
+ * no subject for.
+ */
+test("consuming a sequence value is not a schema change, on the product that has sequences", async () => {
+  // NOCACHE so every NEXTVAL moves the stored position. With the default cache
+  // of 1000 the move happens only when a replay crosses the cache boundary,
+  // which is a real way to hit this and a useless way to test it.
+  const { verdict } = await ran(MARIADB, {
+    ...migratesFrom(REPLAYING, "drizzle"),
+    ...lineage("drizzle", {
+      tag: "0000_seq",
+      when: 1_000,
+      sql: "CREATE SEQUENCE IF NOT EXISTS `counter` NOCACHE;\nSELECT NEXTVAL(`counter`);\n",
+    }),
+  });
+
+  expect(verdict.problems).toEqual([]);
+  expect(verdict.note).toContain("replaying them leaves it identical");
+}, 60_000);

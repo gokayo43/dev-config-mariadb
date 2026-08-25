@@ -32,12 +32,6 @@ export interface Product {
   /** The image it runs, pinned by digest. */
   readonly image: string;
   /**
-   * Whether the product has sequences at all. MySQL has none — no `CREATE
-   * SEQUENCE`, no `NEXTVAL` — so a case about what consuming one does to a dump
-   * is a case only MariaDB can answer.
-   */
-  readonly sequences: boolean;
-  /**
    * What this product's own `version()` says, as much of it as is the product
    * rather than the build. It is what a case asserts to know the server under it
    * is the one the case's name claims — a suite that quietly ran both legs
@@ -75,7 +69,6 @@ const MYSQL_IMAGE =
 export const DEFAULT: Product = {
   name: "MariaDB",
   image: await defaultServerImage(),
-  sequences: true,
   version: "-MariaDB",
   secondCheck: "CONSTRAINT_2",
 };
@@ -83,7 +76,6 @@ export const DEFAULT: Product = {
 const MYSQL: Product = {
   name: "MySQL",
   image: MYSQL_IMAGE,
-  sequences: false,
   version: "8.0.",
   secondCheck: "thing_chk_2",
 };
